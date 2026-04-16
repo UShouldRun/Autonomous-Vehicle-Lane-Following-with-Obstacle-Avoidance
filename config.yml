@@ -1,0 +1,36 @@
+env:
+  simulator: webots
+  robot: e-puck
+  camera_resolution: [64, 64]
+  lidar_type: "1d_radial"  # or "360_pointcloud"
+  track: city_loop
+
+training:
+  total_timesteps: 1_000_000
+  n_runs: 100              # averaged over N runs per experiment
+  seed: 42
+
+agent:
+  type: ppo                # ppo | dqn
+  policy: CnnPolicy
+  learning_rate: 3.0e-4
+  batch_size: 64
+  gamma: 0.99
+
+action_space:
+  type: continuous         # continuous | discrete
+  # continuous: steering ∈ [-1,1], throttle ∈ [-1,1]
+  # discrete: [left, right, straight, brake]
+
+reward:
+  type: dense              # dense | ttc | sparse
+  w1: 1.0                  # progress weight
+  w2: 0.5                  # alignment/deviation penalty weight
+  w3: 0.3                  # collision / safety weight
+  w4: 100.0                # terminal penalty (ttc only)
+  collision_threshold: 0.3 # metres (LiDAR)
+  d_safe: 1.5              # metres (TTC safety radius)
+
+experiment3:
+  fov_distances: [15, 40, 80]   # metres
+  distortions: [fog, rain, low_light]
