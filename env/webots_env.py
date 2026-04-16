@@ -1,16 +1,17 @@
-"""
-webots_env.py — Low-level Webots hardware driver.
+"""""
+webots_env.py — Low-level Webots hardware driver for the City demo car.
 
 Knows nothing about Gym, rewards, or RL. Only speaks to devices.
-Can be unit-tested by passing a mock Supervisor object.
+Uses Ackermann steering (left_steer / right_steer) + front-wheel drive.
 """
 
 import numpy as np
 import cv2
 from controller import Supervisor
 
-TIME_STEP       = 32     # ms — change basicTimeStep in your .wbt to match
-MAX_SPEED       = 6.28   # rad/s — E-puck motor limit
+TIME_STEP       = 32      # ms — must match basicTimeStep in your .wbt
+MAX_STEER       = 0.5     # radians — max steering angle
+MAX_SPEED       = 50.0    # rad/s  — front wheel motor limit
 
 # Yellow line HSV bounds — tune against your world's colour
 YELLOW_LO = np.array([18,  80,  80], dtype=np.uint8)
@@ -19,11 +20,11 @@ YELLOW_HI = np.array([35, 255, 255], dtype=np.uint8)
 
 class WebotsEnv:
     """
-    Thin wrapper around Webots devices for the E-puck on the City track.
+    Thin wrapper around the City demo car's Webots devices.
 
       - Enable and read sensors (camera, LiDAR)
-      - Write motor commands
-      - Reset simulation state
+      - Write steering and throttle commands (Ackermann drive)
+      - Reset simulation state via Supervisor
       - Expose raw physical quantities (speed, alignment angle)
     """
 
@@ -39,17 +40,25 @@ class WebotsEnv:
         # ── LiDAR ─────────────────────────────────────────────────
         self.lidar = self.robot.getDevice("lidar")
         self.lidar.enable(TIME_STEP)
-        self.lidar_size = self.lidar.getNumberOfPoints()
+        # Use horizontal resolution for a flat 1-D range scan (no point cloud needed)
+        self.lidar_size = self.lidar.getHorizontalResolution()
 
-        # ── Motors ────────────────────────────────────────────────
-        self.left_motor  = self.robot.getDevice("left wheel motor")
-        self.right_motor = self.robot.getDevice("right wheel motor")
-        for m in (self.left_motor, self.right_motor):
-            m.setPosition(float("inf"))  # velocity-control mode
-            m.setVelocity(0.0)
+        # ── Steering motors ───────────────────────────────────────
+        self.left_steer  = self.robot.getDevice("left_steer")
+        self.right_steer = self.robot.getDevice("right_steer")
+        for s in (self.left_steer, self.right_steer):
+            s.setPosition(0.0)   # position-control mode, start straight
+
+        # ── Drive wheels (front) ──────────────────────────────────
+        self.left_wheel  = self.robot.getDevice("left_front_wheel")
+        self.right_wheel = self.robot.getDevice("right_front_wheel")
+        for w in (self.left_wheel, self.right_wheel):
+            w.setPosition(float("inf"))  # velocity-control mode
+            w.setVelocity(0.0)
 
         # ── Supervisor: needed for teleport-reset ─────────────────
         self.robot_node = self.robot.getSelf()
+        print(self.robot_node)
         self._init_translation = list(
             self.robot_node.getField("translation").getSFVec3f()
         )
@@ -64,8 +73,8 @@ class WebotsEnv:
         return self.robot.step(TIME_STEP) != -1
 
     def reset(self):
-        """Teleport robot to spawn, clear physics, step once for fresh reads."""
-        self.set_velocity(0.0, 0.0)
+        """Teleport car to spawn, clear physics, step once for fresh reads."""
+        self.set_controls(0.0, 0.0)
         self.robot_node.getField("translation").setSFVec3f(self._init_translation)
         self.robot_node.getField("rotation").setSFRotation(self._init_rotation)
         self.robot.simulationResetPhysics()
@@ -95,10 +104,10 @@ class WebotsEnv:
         Negative  → line is to the left of centre.
         Returns 0.0 when the line is not visible.
         """
-        img  = self.get_camera_image()
-        hsv  = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-        mask = cv2.inRange(hsv, YELLOW_LO, YELLOW_HI)
-        cols = np.where(mask.any(axis=0))[0]
+        img    = self.get_camera_image()
+        hsv    = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+        mask   = cv2.inRange(hsv, YELLOW_LO, YELLOW_HI)
+        cols   = np.where(mask.any(axis=0))[0]
         if len(cols) == 0:
             return 0.0
         cx     = float(cols.mean())
@@ -110,30 +119,35 @@ class WebotsEnv:
 
     # ── Actuator writes ───────────────────────────────────────────
 
-    def set_velocity(self, left: float, right: float):
-        """Set wheel velocities in rad/s, clamped to MAX_SPEED."""
-        self.left_motor.setVelocity(np.clip(left,  -MAX_SPEED, MAX_SPEED))
-        self.right_motor.setVelocity(np.clip(right, -MAX_SPEED, MAX_SPEED))
+    def set_controls(self, steering: float, throttle: float):
+        """
+        steering ∈ [-1, 1]  → mapped to ±MAX_STEER radians
+        throttle ∈ [-1, 1]  → mapped to ±MAX_SPEED rad/s on front wheels
+        """
+        angle = float(np.clip(steering, -1.0, 1.0)) * MAX_STEER
+        speed = float(np.clip(throttle, -1.0, 1.0)) * MAX_SPEED
+
+        self.left_steer.setPosition(angle)
+        self.right_steer.setPosition(angle)
+        self.left_wheel.setVelocity(speed)
+        self.right_wheel.setVelocity(speed)
 
     def apply_continuous(self, steering: float, throttle: float):
         """
         steering ∈ [-1, 1]  (negative = turn left)
         throttle ∈ [-1, 1]  (positive = forward)
         """
-        left  = MAX_SPEED * (throttle - steering)
-        right = MAX_SPEED * (throttle + steering)
-        self.set_velocity(left, right)
+        self.set_controls(steering, throttle)
 
     def apply_discrete(self, action: int):
         """
         0 = left   | 1 = right
         2 = straight | 3 = brake
         """
-        half = MAX_SPEED * 0.5
         cmds = {
-            0: (-half,  half),
-            1: ( half, -half),
-            2: ( half,  half),
-            3: (0.0,    0.0),
+            0: (-1.0,  0.5),   # steer left,  half throttle
+            1: ( 1.0,  0.5),   # steer right, half throttle
+            2: ( 0.0,  1.0),   # straight,    full throttle
+            3: ( 0.0,  0.0),   # brake
         }
-        self.set_velocity(*cmds[int(action)])
+        self.set_controls(*cmds[int(action)])

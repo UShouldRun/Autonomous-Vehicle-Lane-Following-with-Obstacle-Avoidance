@@ -1,0 +1,25 @@
+env:
+  camera_resolution: [64, 64]      # H x W — must match E-puck camera in Webots
+
+action_space:
+  type: continuous                  # overridden by --agent flag in train.py
+
+reward:
+  type: dense                       # overridden by --reward flag in train.py
+  # dense / ttc shared weights
+  w1: 1.0                           # progress weight
+  w2: 0.5                           # alignment / deviation penalty weight
+  w3: 1.0                           # collision / safety weight
+  # ttc-only
+  w4: 10.0                          # terminal penalty weight
+  d_safe: 1.0                       # safety radius (metres)
+  # collision detection threshold
+  collision_threshold: 0.3          # metres — LiDAR below this → terminated
+
+agent:
+  learning_rate: 3.0e-4
+  batch_size: 64
+  gamma: 0.99
+
+training:
+  total_timesteps: 50000            # reduce for a quick smoke test
