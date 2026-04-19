@@ -10,8 +10,11 @@ Usage (Webots sets WEBOTS_ROBOT_NAME and calls this automatically):
     python train.py --agent ppo --reward dense --timesteps 50000
 """
 import argparse
+import csv
 import os
 import sys
+from typing import Optional
+
 import yaml
 
 # ── Graceful import check ──────────────────────────────────────────────────
@@ -27,9 +30,94 @@ except ModuleNotFoundError:
     )
 
 from stable_baselines3 import PPO, DQN
+from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.env_checker import check_env
 
 from env.gym_wrapper import WebotsLaneEnv
+from utils.metrics import summarise
+
+
+# ── Metrics callback ──────────────────────────────────────────────────────
+
+class MetricsCallback(BaseCallback):
+    """
+    SB3 callback that reads EpisodeStats accumulated by the WebotsLaneEnv
+    and, every `summary_every` completed episodes, prints a one-line
+    summary of the evaluation metrics defined in ``utils.metrics``
+    (Section 4.1 of the project proposal):
+      - success_rate_%            — episodes with zero collisions
+      - mean_collisions           — per episode
+      - mean_cross_track_error_m  — image-plane proxy, NOT metres
+      - mean_lap_time_s           — across all completed laps
+      - safety_score              — total distance / total near-misses
+
+    If ``csv_path`` is given, each summary row is also appended to a CSV
+    file for later plotting.
+    """
+
+    _CSV_FIELDS = [
+        "n_episodes",
+        "success_rate_%",
+        "mean_collisions",
+        "mean_cross_track_error_m",
+        "mean_lap_time_s",
+        "safety_score",
+    ]
+
+    def __init__(
+        self,
+        lane_env: WebotsLaneEnv,
+        summary_every: int = 10,
+        csv_path: Optional[str] = None,
+        verbose: int = 0,
+    ):
+        super().__init__(verbose)
+        self._lane_env          = lane_env
+        self._summary_every     = max(int(summary_every), 1)
+        self._csv_path          = csv_path
+        self._last_reported     = 0
+
+    def _on_training_start(self) -> None:
+        if self._csv_path:
+            # (Re)create the CSV and write the header row.
+            with open(self._csv_path, "w", newline="") as f:
+                csv.writer(f).writerow(self._CSV_FIELDS)
+
+    def _on_step(self) -> bool:
+        episodes = self._lane_env.completed_episodes
+        n = len(episodes)
+        if n >= self._last_reported + self._summary_every:
+            self._emit_summary(n, summarise(episodes))
+            self._last_reported = n
+        return True
+
+    def _on_training_end(self) -> None:
+        # Flush a final summary if any episodes closed after the last tick.
+        episodes = self._lane_env.completed_episodes
+        n = len(episodes)
+        if n > self._last_reported:
+            self._emit_summary(n, summarise(episodes))
+            self._last_reported = n
+
+    def _emit_summary(self, n: int, summary: dict) -> None:
+        print(
+            f"[metrics] episodes={n}  "
+            f"success={summary['success_rate_%']:.1f}%  "
+            f"collisions={summary['mean_collisions']:.2f}  "
+            f"CTE={summary['mean_cross_track_error_m']:.3f}  "
+            f"lap={summary['mean_lap_time_s']:.2f}s  "
+            f"safety={summary['safety_score']:.2f}"
+        )
+        if self._csv_path:
+            with open(self._csv_path, "a", newline="") as f:
+                csv.writer(f).writerow([
+                    n,
+                    summary["success_rate_%"],
+                    summary["mean_collisions"],
+                    summary["mean_cross_track_error_m"],
+                    summary["mean_lap_time_s"],
+                    summary["safety_score"],
+                ])
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────
@@ -98,13 +186,28 @@ def main():
     else:
         model = DQN(**agent_kwargs)
 
+    # ── Metrics callback ──────────────────────────────────────────
+    mon_cfg       = cfg.get("monitoring", {}) or {}
+    summary_every = int(mon_cfg.get("summary_every_n_episodes", 10))
+    csv_log       = bool(mon_cfg.get("csv_log", True))
+    csv_path      = (
+        f"results/{args.agent}_{args.reward}_metrics.csv" if csv_log else None
+    )
+    metrics_cb = MetricsCallback(
+        lane_env      = env,
+        summary_every = summary_every,
+        csv_path      = csv_path,
+    )
+
     # ── Train ─────────────────────────────────────────────────────
     save_path = f"results/{args.agent}_{args.reward}_model"
     print(f"[train] Starting training for {timesteps} timesteps …")
     print(f"[train] Model will be saved to '{save_path}.zip'")
+    if csv_path:
+        print(f"[train] Metrics CSV → '{csv_path}' (every {summary_every} episodes)")
 
     try:
-        model.learn(total_timesteps=timesteps)
+        model.learn(total_timesteps=timesteps, callback=metrics_cb)
     except KeyboardInterrupt:
         print("\n[train] Interrupted — saving partial model …")
     finally:

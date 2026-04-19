@@ -4,6 +4,20 @@ env:
 action_space:
   type: continuous                  # overridden by --agent flag in train.py
 
+observation:
+  # Convert RGB → single-channel grayscale. When true, the camera observation
+  # has shape (H, W, 1); when false, (H, W, 3). Bounds/dtype stay float32 [0, 1].
+  grayscale: false
+  # Speed (m/s) used to normalise state[0]. Speeds above this are clipped to 1.0.
+  max_speed: 15.0
+  # If true, LiDAR ranges are scaled from [0, lidar_max_range] → [0, 1].
+  # If false, ranges pass through as float32 metres and the obs-space upper
+  # bound becomes lidar_max_range instead of 1.0.
+  normalize_lidar: true
+  # Upper bound (m) of LiDAR ranges — must match the clip applied by
+  # WebotsEnv.get_lidar_scan() (currently 10 m).
+  lidar_max_range: 10.0
+
 reward:
   type: dense                       # overridden by --reward flag in train.py
   # dense / ttc shared weights
@@ -23,3 +37,7 @@ agent:
 
 training:
   total_timesteps: 50000            # reduce for a quick smoke test
+
+monitoring:
+  # LiDAR distance (m) below which a step counts as a near-miss (but not a
+  # collision). A near
