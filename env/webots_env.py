@@ -15,6 +15,8 @@ TIME_STEP       = 32      # ms — must match basicTimeStep in your .wbt
 MAX_STEER       = 0.5     # radians — max steering angle
 MAX_SPEED       = 50.0    # rad/s  — front wheel motor limit
 
+LIDAR_OUT_SIZE = 512
+
 # Yellow line HSV bounds — tune against your world's colour
 YELLOW_LO = np.array([18,  80,  80], dtype=np.uint8)
 YELLOW_HI = np.array([35, 255, 255], dtype=np.uint8)
@@ -68,7 +70,7 @@ class WebotsEnv:
         self.lidar = self.robot.getDevice("lidar")
         self.lidar.enable(TIME_STEP)
         # Use horizontal resolution for a flat 1-D range scan (no point cloud needed)
-        self.lidar_size = self.lidar.getHorizontalResolution()
+        self.lidar_size = LIDAR_OUT_SIZE
 
         # ── Steering motors ───────────────────────────────────────
         self.left_steer  = self.robot.getDevice("left_steer")
@@ -216,9 +218,12 @@ class WebotsEnv:
         return img[:, :, :3].copy()   # drop alpha channel
 
     def get_lidar_scan(self) -> np.ndarray:
-        """1-D float32 array of range values in metres, NaN/inf replaced with 10.0."""
+        """1-D float32 array of range values, downsampled to LIDAR_OUT_SIZE."""
         scan = np.array(self.lidar.getRangeImage(), dtype=np.float32)
-        return np.clip(np.nan_to_num(scan, nan=10.0, posinf=10.0), 0.0, 10.0)
+        scan = np.clip(np.nan_to_num(scan, nan=10.0, posinf=10.0), 0.0, 10.0)
+        # Downsample by taking evenly-spaced indices
+        indices = np.linspace(0, len(scan) - 1, LIDAR_OUT_SIZE, dtype=int)
+        return scan[indices]
 
     def get_speed(self) -> float:
         """Scalar translational speed in m/s."""

@@ -10,6 +10,8 @@ from typing import Dict, List, Optional
 
 import gymnasium as gym
 import numpy as np
+import cv2
+
 from gymnasium import spaces
 
 from env.webots_env import WebotsEnv
@@ -100,7 +102,7 @@ class WebotsLaneEnv(gym.Env):
         # 3. Raw sensor read — used by reward, collision and stats because
         #    those expect physical units (m/s, metres). The agent will
         #    instead receive the normalised version returned below.
-        raw_obs = self._get_raw_obs()
+        raw_obs = self._get_obs()
 
         # 4. Termination check (raw lidar in metres)
         terminated = self._is_collision(raw_obs["lidar"])
@@ -125,26 +127,18 @@ class WebotsLaneEnv(gym.Env):
 
     # ── Observation ───────────────────────────────────────────────
 
-    def _get_raw_obs(self) -> Dict[str, np.ndarray]:
-        """Raw sensor dict with physical units.
-
-        Used internally for reward, collision and statistics, which all
-        need unit-bearing values. ``get_alignment_angle()`` reads the raw
-        RGB image in HSV space to locate the yellow line, so this must
-        always run against the un-normalised camera frame.
-        """
+    def _get_obs(self) -> dict:
+        cam_h, cam_w = self.config["env"]["camera_resolution"]
+        raw = self._hw.get_camera_image()
+        img = cv2.resize(raw, (cam_w, cam_h))
         return {
-            "camera": self._hw.get_camera_image(),
+            "camera": img,
             "lidar":  self._hw.get_lidar_scan(),
             "state":  np.array(
                 [self._hw.get_speed(), self._hw.get_alignment_angle()],
                 dtype=np.float32,
             ),
         }
-
-    def _get_obs(self) -> Dict[str, np.ndarray]:
-        """Normalised observation for the agent (matches observation_space)."""
-        return preprocess_obs(self._get_raw_obs(), self.config)
 
     # ── Termination ───────────────────────────────────────────────
 
