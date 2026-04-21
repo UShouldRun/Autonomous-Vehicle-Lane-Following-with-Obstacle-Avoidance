@@ -47,6 +47,16 @@ class WebotsLaneEnv(gym.Env):
         lap_departure             = float(mon_cfg.get("lap_departure_distance", 20.0))
         lap_return                = float(mon_cfg.get("lap_return_distance", 5.0))
 
+        # Truncation thresholds (optional section in config.yaml).
+        ep_cfg                        = config.get("episode", {}) or {}
+        self._max_steps               = int(ep_cfg.get("max_steps", 2000))
+        self._stall_speed_threshold   = float(ep_cfg.get("stall_speed_threshold", 0.1))
+        self._stall_steps             = int(ep_cfg.get("stall_steps", 100))
+
+        # Per-episode step / stall counters (reset each reset()).
+        self._step_count: int    = 0
+        self._stall_counter: int = 0
+
         # Hardware driver — the only place Webots is touched
         self._hw = WebotsEnv(
             near_miss_threshold     = self._near_miss_threshold,
@@ -86,6 +96,8 @@ class WebotsLaneEnv(gym.Env):
         # Start a fresh per-episode statistics record.
         self._current_stats      = EpisodeStats()
         self._episode_start_time = float(self._hw.robot.getTime())
+        self._step_count         = 0
+        self._stall_counter      = 0
 
         return self._get_obs(), {}
 
@@ -102,22 +114,42 @@ class WebotsLaneEnv(gym.Env):
         # 3. Raw sensor read — used by reward, collision and stats because
         #    those expect physical units (m/s, metres). The agent will
         #    instead receive the normalised version returned below.
-        raw_obs = self._get_obs()
+        raw_obs = self._get_raw_obs()
 
-        # 4. Termination check (raw lidar in metres)
+        # 4. Step / stall bookkeeping (raw speed in m/s from state[0]).
+        self._step_count += 1
+        if float(raw_obs["state"][0]) < self._stall_speed_threshold:
+            self._stall_counter += 1
+        else:
+            self._stall_counter = 0
+
+        # 5. Termination check (raw lidar in metres) — collision only
         terminated = self._is_collision(raw_obs["lidar"])
         truncated  = False
 
-        # 5. Reward (raw speed in m/s, raw lidar in metres)
+        # 6. Truncation checks (AFTER collision, BEFORE reward). Collision
+        #    wins; otherwise max_steps or stalled may truncate the episode.
+        if terminated:
+            termination_reason = "collision"
+        elif self._max_steps > 0 and self._step_count >= self._max_steps:
+            truncated = True
+            termination_reason = "max_steps"
+        elif self._stall_counter >= self._stall_steps:
+            truncated = True
+            termination_reason = "stalled"
+        else:
+            termination_reason = ""
+
+        # 7. Reward (raw speed in m/s, raw lidar in metres)
         reward = self._compute_reward(raw_obs, terminated)
 
-        # 6. Episode stats (raw values)
-        self._update_episode_stats(raw_obs, terminated, truncated)
+        # 8. Episode stats (raw values)
+        self._update_episode_stats(raw_obs, terminated, truncated, reward)
 
-        # 7. Normalised observation for the agent
+        # 9. Normalised observation for the agent
         obs = preprocess_obs(raw_obs, self.config)
 
-        return obs, reward, terminated, truncated, {}
+        return obs, reward, terminated, truncated, {"termination_reason": termination_reason}
 
     def render(self):
         pass  # Webots renders its own GUI window
@@ -127,7 +159,14 @@ class WebotsLaneEnv(gym.Env):
 
     # ── Observation ───────────────────────────────────────────────
 
-    def _get_obs(self) -> dict:
+    def _get_raw_obs(self) -> dict:
+        """Raw sensor dict with physical units and defensive resize.
+
+        Used internally for reward, collision and statistics, which all
+        need unit-bearing values. ``get_alignment_angle()`` reads the raw
+        RGB image in HSV space to locate the yellow line, so this must
+        always run against the un-normalised camera frame.
+        """
         cam_h, cam_w = self.config["env"]["camera_resolution"]
         raw = self._hw.get_camera_image()
         img = cv2.resize(raw, (cam_w, cam_h))
@@ -139,6 +178,10 @@ class WebotsLaneEnv(gym.Env):
                 dtype=np.float32,
             ),
         }
+
+    def _get_obs(self) -> dict:
+        """Normalised observation for the agent (matches observation_space)."""
+        return preprocess_obs(self._get_raw_obs(), self.config)
 
     # ── Termination ───────────────────────────────────────────────
 
@@ -172,13 +215,17 @@ class WebotsLaneEnv(gym.Env):
     # ── Episode statistics ───────────────────────────────────────
 
     def _update_episode_stats(
-        self, obs: dict, terminated: bool, truncated: bool
+        self, obs: dict, terminated: bool, truncated: bool, reward: float = 0.0
     ) -> None:
         """Fold the latest step into the current EpisodeStats. On episode end,
         finalise the record and append it to the completed-episodes list."""
         stats = self._current_stats
         if stats is None:
             return
+
+        # Step / reward accumulation.
+        stats.total_steps += 1
+        stats.total_reward += float(reward)
 
         # Cross-track error — image-plane proxy (see _compute_reward TODO).
         stats.cross_track_errors.append(abs(float(obs["state"][1])))

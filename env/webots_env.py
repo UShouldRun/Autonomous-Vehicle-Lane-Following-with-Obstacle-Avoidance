@@ -11,7 +11,7 @@ import numpy as np
 import cv2
 from controller import Supervisor
 
-TIME_STEP       = 32      # ms — must match basicTimeStep in your .wbt
+TIME_STEP       = 10      # ms — matches basicTimeStep in city.wbt
 MAX_STEER       = 0.5     # radians — max steering angle
 MAX_SPEED       = 50.0    # rad/s  — front wheel motor limit
 

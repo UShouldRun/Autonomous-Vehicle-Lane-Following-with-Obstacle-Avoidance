@@ -37,7 +37,23 @@ agent:
 
 training:
   total_timesteps: 50000            # reduce for a quick smoke test
+  checkpoint_every_n_steps: 200000  # Save a checkpoint every N timesteps (0 disables)
+
+episode:
+  max_steps: 10000             # Truncate episode after this many steps (0 disables) — 100s at 10ms/step
+  stall_speed_threshold: 0.1   # m/s — below this counts as "stalled"
+  stall_steps: 1500            # Consecutive stalled steps before truncation — 15s at 10ms/step
 
 monitoring:
   # LiDAR distance (m) below which a step counts as a near-miss (but not a
-  # collision). A near
+  # collision). A near-miss is a step where the closest LiDAR reading is in
+  # the band (collision_threshold, near_miss_threshold].
+  near_miss_threshold: 1.0        # metres
+  # Lap detection: the car must first travel this far from spawn...
+  lap_departure_distance: 20.0    # metres
+  # ...then return within this distance to register a lap completion.
+  lap_return_distance: 5.0        # metres
+  # Print a metrics summary every N completed episodes during training.
+  summary_every_n_episodes: 10
+  # Write training metrics to a CSV file in results/.
+  csv_log: true

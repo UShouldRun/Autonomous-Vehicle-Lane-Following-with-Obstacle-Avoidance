@@ -62,6 +62,8 @@ class MetricsCallback(BaseCallback):
         "mean_cross_track_error_m",
         "mean_lap_time_s",
         "safety_score",
+        "mean_steps",
+        "mean_reward",
     ]
 
     def __init__(
@@ -106,7 +108,9 @@ class MetricsCallback(BaseCallback):
             f"collisions={summary['mean_collisions']:.2f}  "
             f"CTE={summary['mean_cross_track_error_m']:.3f}  "
             f"lap={summary['mean_lap_time_s']:.2f}s  "
-            f"safety={summary['safety_score']:.2f}"
+            f"safety={summary['safety_score']:.2f}  "
+            f"steps={summary['mean_steps']:.1f}  "
+            f"reward={summary['mean_reward']:.2f}"
         )
         if self._csv_path:
             with open(self._csv_path, "a", newline="") as f:
@@ -117,7 +121,48 @@ class MetricsCallback(BaseCallback):
                     summary["mean_cross_track_error_m"],
                     summary["mean_lap_time_s"],
                     summary["safety_score"],
+                    summary["mean_steps"],
+                    summary["mean_reward"],
                 ])
+
+
+# ── Checkpoint callback ──────────────────────────────────────────────────
+
+class CheckpointCallback(BaseCallback):
+    """
+    Periodically save the model while training.
+
+    Files are written as ``{save_path}/{name_prefix}_{num_timesteps}.zip`` —
+    e.g. ``results/ppo_dense_checkpoint_50000.zip``. A trigger fires every
+    ``save_freq`` training steps; ``save_freq <= 0`` disables the callback
+    entirely and the caller should just not construct it in that case.
+    """
+
+    def __init__(
+        self,
+        save_freq: int,
+        save_path: str,
+        name_prefix: str,
+        verbose: int = 0,
+    ):
+        super().__init__(verbose)
+        self._save_freq   = max(int(save_freq), 1)
+        self._save_path   = save_path
+        self._name_prefix = name_prefix
+
+    def _on_training_start(self) -> None:
+        os.makedirs(self._save_path, exist_ok=True)
+
+    def _on_step(self) -> bool:
+        if self.n_calls % self._save_freq == 0:
+            # `model.save` appends the .zip extension itself.
+            path = os.path.join(
+                self._save_path, f"{self._name_prefix}_{self.num_timesteps}"
+            )
+            self.model.save(path)
+            if self.verbose > 0:
+                print(f"[checkpoint] saved → {path}.zip")
+        return True
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────
@@ -129,6 +174,8 @@ def parse_args():
     p.add_argument("--config",    default="config.yaml")
     p.add_argument("--timesteps", type=int, default=None,
                    help="Override total_timesteps from config")
+    p.add_argument("--resume", default=None, metavar="PATH",
+                   help="Path to a saved .zip model to continue training from")
     p.add_argument("--check-env", action="store_true",
                    help="Run SB3 env checker then exit (useful for first-run debugging)")
     return p.parse_args()
@@ -181,10 +228,21 @@ def main():
         gamma           = cfg["agent"]["gamma"],
     )
 
-    if args.agent == "ppo":
-        model = PPO(**agent_kwargs)
+    AgentCls = PPO if args.agent == "ppo" else DQN
+
+    if args.resume:
+        if not os.path.isfile(args.resume):
+            sys.exit(
+                f"[ERROR] --resume file not found: '{args.resume}'\n"
+                "  Pass the full path to a saved .zip model."
+            )
+        print(f"[train] Resuming from '{args.resume}' …")
+        # Loading with env=env rebinds the saved policy to the current
+        # environment (equivalent to calling set_env afterwards). The saved
+        # hyperparameters inside the zip take precedence over agent_kwargs.
+        model = AgentCls.load(args.resume, env=env)
     else:
-        model = DQN(**agent_kwargs)
+        model = AgentCls(**agent_kwargs)
 
     # ── Metrics callback ──────────────────────────────────────────
     mon_cfg       = cfg.get("monitoring", {}) or {}
@@ -199,15 +257,30 @@ def main():
         csv_path      = csv_path,
     )
 
+    # ── Checkpoint callback ───────────────────────────────────────
+    callbacks = [metrics_cb]
+    ckpt_every = int(cfg.get("training", {}).get("checkpoint_every_n_steps", 0))
+    if ckpt_every > 0:
+        callbacks.append(
+            CheckpointCallback(
+                save_freq   = ckpt_every,
+                save_path   = "results",
+                name_prefix = f"{args.agent}_{args.reward}_checkpoint",
+                verbose     = 1,
+            )
+        )
+
     # ── Train ─────────────────────────────────────────────────────
     save_path = f"results/{args.agent}_{args.reward}_model"
     print(f"[train] Starting training for {timesteps} timesteps …")
     print(f"[train] Model will be saved to '{save_path}.zip'")
     if csv_path:
         print(f"[train] Metrics CSV → '{csv_path}' (every {summary_every} episodes)")
+    if ckpt_every > 0:
+        print(f"[train] Checkpoints every {ckpt_every} timesteps → 'results/'")
 
     try:
-        model.learn(total_timesteps=timesteps, callback=metrics_cb)
+        model.learn(total_timesteps=timesteps, callback=callbacks)
     except KeyboardInterrupt:
         print("\n[train] Interrupted — saving partial model …")
     finally:

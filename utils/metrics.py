@@ -11,6 +11,8 @@ class EpisodeStats:
     cross_track_errors: List[float] = field(default_factory=list)  # metres
     distance_travelled: float = 0.0
     near_misses: int = 0
+    total_steps: int = 0
+    total_reward: float = 0.0
 
 
 def success_rate(episodes: List[EpisodeStats]) -> float:
@@ -39,6 +41,14 @@ def safety_score(episodes: List[EpisodeStats]) -> float:
     return total_dist / total_nm
 
 
+def mean_steps(episodes: List[EpisodeStats]) -> float:
+    return np.mean([e.total_steps for e in episodes])
+
+
+def mean_reward(episodes: List[EpisodeStats]) -> float:
+    return np.mean([e.total_reward for e in episodes])
+
+
 def summarise(episodes: List[EpisodeStats]) -> dict:
     return {
         "success_rate_%":       success_rate(episodes),
@@ -46,4 +56,6 @@ def summarise(episodes: List[EpisodeStats]) -> dict:
         "mean_cross_track_error_m": mean_cross_track_error(episodes),
         "mean_lap_time_s":      mean_lap_time(episodes),
         "safety_score":         safety_score(episodes),
+        "mean_steps":           mean_steps(episodes),
+        "mean_reward":          mean_reward(episodes),
     }
