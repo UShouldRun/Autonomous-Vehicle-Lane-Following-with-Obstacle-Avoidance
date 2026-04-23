@@ -40,8 +40,8 @@ training:
   checkpoint_every_n_steps: 200000  # Save a checkpoint every N timesteps (0 disables)
 
 episode:
-  max_steps: 10000             # Truncate episode after this many steps (0 disables) — 100s at 10ms/step
-  stall_speed_threshold: 0.1   # m/s — below this counts as "stalled"
+  max_steps: 100000            # Truncate episode after this many steps (0 disables) — 100s at 10ms/step
+  stall_speed_threshold: 0     # m/s — below this counts as "stalled"
   stall_steps: 1500            # Consecutive stalled steps before truncation — 15s at 10ms/step
 
 monitoring:

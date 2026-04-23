@@ -1,11 +1,3 @@
-"""
-gym_wrapper.py — Gymnasium interface for the RL agent.
-
-Knows nothing about Webots devices directly.
-Delegates all hardware reads/writes to WebotsEnv.
-This is what stable-baselines3 talks to.
-"""
-
 from typing import Dict, List, Optional
 
 import gymnasium as gym
@@ -74,7 +66,6 @@ class WebotsLaneEnv(gym.Env):
             cam_h=cam_h, cam_w=cam_w, lidar_size=lidar_size, config=config,
         )
 
-        # ── Action space ──────────────────────────────────────────
         if self._action_type == "continuous":
             # [steering, throttle] both in [-1, 1]
             self.action_space = spaces.Box(-1.0, 1.0, shape=(2,), dtype=np.float32)
@@ -82,18 +73,14 @@ class WebotsLaneEnv(gym.Env):
             # 0=left  1=right  2=straight  3=brake
             self.action_space = spaces.Discrete(4)
 
-        # ── Episode-statistics bookkeeping ────────────────────────
         self._current_stats: Optional[EpisodeStats] = None
         self._completed_episodes: List[EpisodeStats] = []
         self._episode_start_time: float              = 0.0
-
-    # ── Gym API ───────────────────────────────────────────────────
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self._hw.reset()
 
-        # Start a fresh per-episode statistics record.
         self._current_stats      = EpisodeStats()
         self._episode_start_time = float(self._hw.robot.getTime())
         self._step_count         = 0
@@ -102,13 +89,11 @@ class WebotsLaneEnv(gym.Env):
         return self._get_obs(), {}
 
     def step(self, action):
-        # 1. Send action to hardware
         if self._action_type == "continuous":
             self._hw.apply_continuous(float(action[0]), float(action[1]))
         else:
             self._hw.apply_discrete(int(action))
 
-        # 2. Advance simulation by one timestep (also updates HW tracking)
         self._hw.step()
 
         # 3. Raw sensor read — used by reward, collision and stats because
@@ -157,8 +142,6 @@ class WebotsLaneEnv(gym.Env):
     def close(self):
         pass
 
-    # ── Observation ───────────────────────────────────────────────
-
     def _get_raw_obs(self) -> dict:
         """Raw sensor dict with physical units and defensive resize.
 
@@ -174,7 +157,7 @@ class WebotsLaneEnv(gym.Env):
             "camera": img,
             "lidar":  self._hw.get_lidar_scan(),
             "state":  np.array(
-                [self._hw.get_speed(), self._hw.get_alignment_angle()],
+                [self._hw.get_forward_speed(), self._hw.get_alignment_angle()],
                 dtype=np.float32,
             ),
         }
@@ -183,20 +166,15 @@ class WebotsLaneEnv(gym.Env):
         """Normalised observation for the agent (matches observation_space)."""
         return preprocess_obs(self._get_raw_obs(), self.config)
 
-    # ── Termination ───────────────────────────────────────────────
-
     def _is_collision(self, lidar: np.ndarray) -> bool:
         return bool(lidar.min() < self._collision_threshold)
-
-    # ── Reward ────────────────────────────────────────────────────
 
     def _compute_reward(self, obs: dict, terminated: bool) -> float:
         v     = float(obs["state"][0])   # speed
         theta = float(obs["state"][1])   # alignment angle
         # TODO: `d` is a proxy for the lateral distance to the yellow line —
         # it is the normalised image offset |theta| ∈ [0, 1], NOT a metric
-        # cross-track error. Replace with a real CTE when world-frame road
-        # geometry becomes available.
+        # cross-track error.
         d     = abs(theta)
         cfg   = self._reward_cfg
 
@@ -212,8 +190,6 @@ class WebotsLaneEnv(gym.Env):
         else:
             raise ValueError(f"Unknown reward type: {reward_type}")
 
-    # ── Episode statistics ───────────────────────────────────────
-
     def _update_episode_stats(
         self, obs: dict, terminated: bool, truncated: bool, reward: float = 0.0
     ) -> None:
@@ -227,7 +203,6 @@ class WebotsLaneEnv(gym.Env):
         stats.total_steps += 1
         stats.total_reward += float(reward)
 
-        # Cross-track error — image-plane proxy (see _compute_reward TODO).
         stats.cross_track_errors.append(abs(float(obs["state"][1])))
 
         # Distance travelled is cumulative in the HW driver — overwrite.

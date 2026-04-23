@@ -1,10 +1,3 @@
-"""""
-webots_env.py — Low-level Webots hardware driver for the City demo car.
-
-Knows nothing about Gym, rewards, or RL. Only speaks to devices.
-Uses Ackermann steering (left_steer / right_steer) + front-wheel drive.
-"""
-
 from typing import List, Optional
 
 import numpy as np
@@ -225,6 +218,21 @@ class WebotsEnv:
         indices = np.linspace(0, len(scan) - 1, LIDAR_OUT_SIZE, dtype=int)
         return scan[indices]
 
+    def get_forward_speed(self) -> float:
+        """
+        Signed speed along the car's forward axis (m/s).
+        Positive → moving forward.
+        Negative → moving backward.
+        """
+        v = self.robot_node.getVelocity()[:3]          # world-frame [vx, vy, vz]
+        
+        # Rotation matrix: columns are the car's local X, Y, Z axes in world frame
+        # Row 2 (index 2) is the local forward axis (−Z in Webots convention)
+        rot = np.array(self.robot_node.getOrientation()).reshape(3, 3)
+        forward_axis = rot[:, 2]                        # local +Z column
+        
+        return float(np.dot(v, -forward_axis))          # negate: Webots +Z is backward
+
     def get_speed(self) -> float:
         """Scalar translational speed in m/s."""
         v = self.robot_node.getVelocity()   # [vx, vy, vz, wx, wy, wz]
@@ -241,14 +249,18 @@ class WebotsEnv:
         width, NOT a lateral distance in metres. A proper CTE would require
         knowing the world-frame road geometry.
         """
-        img    = self.get_camera_image()
-        hsv    = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-        mask   = cv2.inRange(hsv, YELLOW_LO, YELLOW_HI)
-        cols   = np.where(mask.any(axis=0))[0]
+
+        img  = self.get_camera_image()
+        hsv  = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+        mask = cv2.inRange(hsv, YELLOW_LO, YELLOW_HI)
+        cols = np.where(mask.any(axis=0))[0]
+
         if len(cols) == 0:
-            return 0.0
+            return 1.0
+
         cx     = float(cols.mean())
         centre = self.cam_w / 2.0
+
         return (cx - centre) / centre
 
     def get_min_lidar_distance(self) -> float:
