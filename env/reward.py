@@ -6,10 +6,10 @@ def dense_reward(v: float, theta: float, d: float, collision: bool, cfg: dict) -
     Reward = Progress - Alignment Penalty - Collision Penalty
     """
     w1, w2, w3 = cfg["w1"], cfg["w2"], cfg["w3"]
-    progress          = w1 * v * np.cos(theta)
-    alignment_penalty = w2 * abs(d)
-    collision_penalty = w3 * 100.0 if collision else 0.0
-    return progress - alignment_penalty - collision_penalty
+    progress          = w1 * v / abs(v)
+    alignment         = w2 * (min(1 / abs(d) if d != 0 else 2, 2) - abs(d))
+    collision_penalty = w3 * abs(v) if collision else 0.0
+    return progress + alignment - collision_penalty
 
 
 def ttc_reward(v: float, theta: float, d: float, d_min: float,

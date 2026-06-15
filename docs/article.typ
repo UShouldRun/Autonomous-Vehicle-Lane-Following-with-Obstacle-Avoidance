@@ -112,7 +112,7 @@
 ]
 
 #text(size: 8.5pt)[
-_This paper presents the design and
+*_This paper presents the design and
 evaluation of a Reinforcement Learning
 (RL) agent for autonomous lane following
 with obstacle avoidance in a simulated
@@ -135,7 +135,7 @@ performance, while adversarial visual
 training will produce a more robust
 policy. Results and conclusions are
 presented after completing the full
-experimental campaign._
+experimental campaign._*
 ]
 
 #v(0.4em)

@@ -511,7 +511,7 @@ class WebotsEnv:
         # maxRange is 1 m so the clip is a no-op, and normalize_lidar() final
         # np.clip(0, 1) keeps the body-noise sentinel saturated at "far".
         scan = np.clip(np.nan_to_num(scan, nan=30.0, posinf=30.0), 0.0, 30.0)
-        scan[scan < 0.32] = 30.0  # body noise peaks at 0.265, filter up to 0.32
+        scan[scan < 0.27] = 30.0  # body noise peaks at 0.265, filter up to 0.32
         return scan
 
     def is_collision(self) -> bool:
@@ -532,7 +532,6 @@ class WebotsEnv:
     def get_alignment_angle(self) -> Tuple[float, bool]:
         """
         Normalised lateral offset of the yellow centre line and a visibility flag.
-
         Returns
         -------
         theta_norm : float
@@ -554,7 +553,7 @@ class WebotsEnv:
         cols = np.where(mask.any(axis=0))[0]
 
         if len(cols) == 0:
-            return 1.0, False
+            return 2.0, False
 
         cx     = float(cols.mean())
         centre = self.cam_w / 2.0

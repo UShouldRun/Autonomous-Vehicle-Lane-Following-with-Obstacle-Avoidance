@@ -136,12 +136,12 @@ class WebotsLaneEnv(gym.Env):
             self._stall_counter = 0
 
         # Termination check — physics-based touch sensor, no LiDAR threshold.
-        terminated = self._is_collision()
+        terminated = self._is_collision() # or self._yellow_line_is_not_visible(raw_obs["state"][1])
         truncated  = False
 
         # Truncation checks (after collision, before reward).
         if terminated:
-            termination_reason = "collision"
+            termination_reason = "collision" if self._is_collision() else "yellow line not visible"
         elif self._max_steps > 0 and self._step_count >= self._max_steps:
             truncated = True
             termination_reason = "max_steps"
@@ -192,12 +192,16 @@ class WebotsLaneEnv(gym.Env):
         """Physics-based collision detection via touch sensor."""
         return self._hw.is_collision()
 
+    def _yellow_line_is_not_visible(self, yellow_score: float) -> bool:
+        return yellow_score == 2.0
+
     def _compute_reward(self, obs: dict, terminated: bool, distance_delta: float) -> float:
         state      = obs["state"]
         v          = float(state[0])     # speed (m/s)
         theta_norm = float(state[1])     # alignment proxy ∈ [-1, 1] (1.0 when lost)
         line_lost  = float(state[2]) < 0.5
         cfg        = self._reward_cfg
+
         reward_type = cfg.get("type", "dense")
 
         lap_completed = self._hw.get_lap_completed()

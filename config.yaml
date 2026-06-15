@@ -22,11 +22,11 @@ observation:
   lidar_max_range: 30.0
 
 reward:
-  type: dense                       # overridden by --reward flag in train.py
+  type: dense_v2                    # overridden by --reward flag in train.py
   # ── v1 weights (legacy: dense / ttc) ──
   w1: 1.0                           # progress weight
-  w2: 0.5                           # alignment / deviation penalty weight
-  w3: 1.0                           # collision / safety weight
+  w2: 1.5                           # alignment / deviation penalty weight
+  w3: 1.5                           # collision / safety weight
   # ttc-only
   w4: 10.0                          # terminal penalty weight
   d_safe: 1.0                       # safety radius (metres)
@@ -36,7 +36,7 @@ reward:
   w_progress: 1.0                   # multiplier on distance-delta progress (m/step)
   w_lap: 50.0                       # one-off bonus when a lap closes
   w_collision: 100.0                # collision penalty magnitude (applied negated)
-  w_line_lost: 0.3                  # per-step penalty while the yellow line is lost (lowered from 1.0 to avoid reward-hack: at 14 m/s progress max ≈ 0.14/step, so 1.0/step made line-lost dominate)
+  w_line_lost: 0.8                  # per-step penalty while the yellow line is lost (lowered from 1.0 to avoid reward-hack: at 14 m/s progress max ≈ 0.14/step, so 1.0/step made line-lost dominate)
   # ttc_v2 only
   w_safety: 2.0                     # proximity-penalty weight
   d_safe_v2: 0.5                    # m — safety fires only inside this radius (½ of v1 d_safe)
@@ -48,8 +48,8 @@ agent:
   buffer_size: 10000
 
 training:
-  total_timesteps: 50000            # reduce for a quick smoke test
-  checkpoint_every_n_steps: 100000  # Save a checkpoint every N timesteps (0 disables)
+  total_timesteps: 500000          # reduce for a quick smoke test
+  checkpoint_every_n_steps: 10000  # Save a checkpoint every N timesteps (0 disables)
 
 episode:
   max_steps: 100000            # Truncate episode after this many steps (0 disables) — 100s at 10ms/step

@@ -12,7 +12,7 @@ Raw → normalised channel summary
 camera : uint8   (H, W, 3)   in [0, 255]   → float32 (H, W, 1|3) in [0, 1]
 lidar  : float32 (lidar_size,) in [0, max_range]
                                              → float32 (lidar_size,) in [0, 1]
-state  : float32 (3,)        [speed m/s, alignment ∈ [-1, 1], line_visible ∈ {0,1}]
+state  : float32 (3,)  [speed m/s, alignment ∈ [-2, 2], line_visible ∈ {0,1}]
                                              → float32 (3,) [speed/max_speed clipped
                                                              to [0, 1], alignment,
                                                              line_visible]
@@ -45,7 +45,7 @@ def normalize_state(state: np.ndarray, max_speed: float) -> np.ndarray:
     """Normalise the vehicle-state vector.
 
     state[0] — speed in m/s, divided by ``max_speed`` and clipped to [0, 1].
-    state[1] — alignment angle proxy already in [-1, 1]; passes through unchanged.
+    state[1] — alignment proxy ∈ [-2, 2] (2.0 when line lost); passes through unchanged.
     state[2] — line-visible flag in {0, 1}; passes through unchanged.
     """
     out = state.astype(np.float32).copy()
@@ -113,11 +113,11 @@ def build_observation_space(
             low=0.0, high=float(lidar_max), shape=(lidar_size,), dtype=np.float32,
         )
 
-    # state[0] = speed/max_speed ∈ [0, 1]; state[1] = alignment angle ∈ [-1, 1];
+    # state[0] = speed/max_speed ∈ [0, 1]; state[1] = alignment angle ∈ [-2, 2];
     # state[2] = line_visible flag ∈ {0, 1}
     state_space = spaces.Box(
-        low=np.array([0.0, -1.0, 0.0], dtype=np.float32),
-        high=np.array([1.0,  1.0, 1.0], dtype=np.float32),
+        low=np.array([0.0, -2.0, 0.0], dtype=np.float32),
+        high=np.array([1.0, 2.0, 1.0], dtype=np.float32),
         dtype=np.float32,
     )
 
