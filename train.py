@@ -21,7 +21,7 @@ except ModuleNotFoundError:
 from stable_baselines3 import PPO, DQN
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.env_checker import check_env
-from stable_baselines3.common.utils import get_linear_fn
+from stable_baselines3.common.utils import LinearSchedule
 
 from env.gym_wrapper import WebotsLaneEnv
 from utils.metrics import summarise
@@ -225,13 +225,9 @@ OPTIONS
                                            (discrete action space)
                                    Default: ppo
 
-  --reward  {dense,ttc,sparse,     Reward shaping strategy.
-            dense_v2,ttc_v2}       • dense    → v1 per-step v·cos(θ) signal
-                                   • ttc      → v1 dense + proximity-safety term
-                                   • sparse   → reward only at episode end
-                                   • dense_v2 → distance-based progress + lap
-                                                bonus + explicit line-lost penalty
-                                   • ttc_v2   → dense_v2 + calibrated safety term
+  --reward  {dense,sparse}         Reward shaping strategy.
+                                   • dense  → per-step v·cos(θ) signal
+                                   • sparse → reward only at episode end
                                    Default: dense
 
   --config  PATH                   Path to YAML config file.
@@ -316,7 +312,7 @@ NOTES
 def parse_args():
     p = argparse.ArgumentParser(add_help=False)  # We handle --help ourselves
     p.add_argument("--agent",     choices=["ppo", "dqn"], default=None)
-    p.add_argument("--reward",    choices=["dense", "ttc", "sparse", "dense_v2", "ttc_v2"],
+    p.add_argument("--reward",    choices=["dense", "sparse"],
                    default=None)
     p.add_argument("--config",    default=None)
     p.add_argument("--timesteps", type=int, default=None,
@@ -385,9 +381,6 @@ def main():
     # CLI flags override config values
     cfg["reward"]["type"]       = args.reward
     cfg["action_space"]["type"] = "continuous" if args.agent == "ppo" else "discrete"
-    # --obstacles flips the obstacle subsystem on (defaults to off in
-    # config.yaml so backward compatibility is preserved when the flag
-    # isn't passed). All other obstacle parameters are read from config.
     if args.obstacles:
         cfg.setdefault("obstacles", {})["enabled"] = True
 
@@ -420,28 +413,48 @@ def main():
         return
 
     # ── Build agent ───────────────────────────────────────────────
-    timesteps = args.timesteps or cfg["training"]["total_timesteps"]
+    timesteps  = args.timesteps or cfg["training"]["total_timesteps"]
+    agent_cfg  = cfg["agent"]
+    initial_lr = float(agent_cfg["learning_rate"])
 
-    initial_lr = float(cfg["agent"]["learning_rate"])
     if args.lr_schedule == "linear":
-        # SB3 schedules consume a remaining-progress fraction in [1, 0] and
-        # return the current value. get_linear_fn(start, end, end_fraction)
-        # with end_fraction=1.0 anneals linearly across the entire run.
-        learning_rate = get_linear_fn(initial_lr, 0.0, 1.0)
+        # LinearSchedule(schedule_timesteps, final_p, initial_p) returns a
+        # callable that SB3 calls with the remaining-progress fraction.
+        learning_rate = LinearSchedule(
+            initial_lr,
+            0.0,              
+            end_fraction=0.0  
+        )
     else:
         learning_rate = initial_lr
 
-    agent_kwargs = dict(
+    # Shared kwargs accepted by both PPO and DQN
+    common_kwargs = dict(
         policy          = "MultiInputPolicy",
         env             = env,
         verbose         = 1,
         learning_rate   = learning_rate,
-        batch_size      = cfg["agent"]["batch_size"],
-        gamma           = cfg["agent"]["gamma"],
+        batch_size      = agent_cfg["batch_size"],
+        gamma           = agent_cfg["gamma"],
         tensorboard_log = tb_dir,
     )
 
     AgentCls = PPO if args.agent == "ppo" else DQN
+
+    if AgentCls is PPO:
+        agent_kwargs = {
+            **common_kwargs,
+            "n_steps":   agent_cfg.get("n_steps", 2048),
+            "gae_lambda": agent_cfg.get("gae_lambda", 0.95),
+            "n_epochs":  agent_cfg.get("n_epochs", 10),
+            "clip_range": agent_cfg.get("clip_range", 0.2),
+            "ent_coef":  agent_cfg.get("ent_coef", 0.0),
+        }
+    else:  # DQN
+        agent_kwargs = {
+            **common_kwargs,
+            "buffer_size": agent_cfg.get("buffer_size", 10000),
+        }
 
     if args.resume:
         if not os.path.isfile(args.resume):
@@ -450,9 +463,6 @@ def main():
                 "  Pass the full path to a saved .zip model."
             )
         print(f"[train] Resuming from '{args.resume}' …")
-        # Loading with env=env rebinds the saved policy to the current
-        # environment (equivalent to calling set_env afterwards). The saved
-        # hyperparameters inside the zip take precedence over agent_kwargs.
         model = AgentCls.load(args.resume, env=env, tensorboard_log=tb_dir)
     else:
         model = AgentCls(**agent_kwargs)

@@ -7,7 +7,7 @@ import cv2
 from gymnasium import spaces
 
 from env.webots_env import WebotsEnv
-from env.reward import dense_reward, ttc_reward, sparse_reward, dense_v2, ttc_v2
+from env.reward import dense_reward, sparse_reward
 from utils.metrics import EpisodeStats
 from utils.observation import preprocess_obs, build_observation_space
 
@@ -152,6 +152,8 @@ class WebotsLaneEnv(gym.Env):
             termination_reason = ""
 
         reward = self._compute_reward(raw_obs, terminated, distance_delta)
+        print(f"reward: {reward:+.4f}")
+        print("\033[F\033[F\033[F\033[F\033[F", end="", flush=True)
         self._update_episode_stats(raw_obs, terminated, truncated, reward)
         obs = preprocess_obs(raw_obs, self.config)
 
@@ -195,33 +197,26 @@ class WebotsLaneEnv(gym.Env):
     def _yellow_line_is_not_visible(self, yellow_score: float) -> bool:
         return yellow_score == 2.0
 
+    
     def _compute_reward(self, obs: dict, terminated: bool, distance_delta: float) -> float:
-        state      = obs["state"]
-        v          = float(state[0])     # speed (m/s)
-        theta_norm = float(state[1])     # alignment proxy ∈ [-1, 1] (1.0 when lost)
-        line_lost  = float(state[2]) < 0.5
-        cfg        = self._reward_cfg
+        state         = obs["state"]
+        v             = float(state[0])      # forward speed (m/s)
+        theta_norm    = float(state[1])      # lateral offset proxy ∈ [-1, 1]
+        line_lost     = float(state[2]) < 0.5
+        cfg           = self._reward_cfg
 
-        reward_type = cfg.get("type", "dense")
-
+        reward_type   = cfg.get("type", "dense_reward")
         lap_completed = self._hw.get_lap_completed()
-        d_min         = float(obs["lidar"].min())   # metres (raw scan)
-
-        if reward_type == "dense_v2":
-            return dense_v2(distance_delta, theta_norm, line_lost,
-                            lap_completed, terminated, cfg)
-        elif reward_type == "ttc_v2":
-            return ttc_v2(distance_delta, theta_norm, line_lost,
-                          lap_completed, terminated, d_min, cfg)
-        elif reward_type == "dense":
-            # Legacy: |alignment| stands in for cross-track error (NOT metres).
-            return dense_reward(v, theta_norm, abs(theta_norm), terminated, cfg)
-        elif reward_type == "ttc":
-            return ttc_reward(v, theta_norm, abs(theta_norm), d_min, terminated, cfg)
+ 
+        if reward_type == "dense":
+            return dense_reward(v, theta_norm, line_lost,
+                            lap_completed, terminated, cfg,
+                            distance_delta=distance_delta)
         elif reward_type == "sparse":
             return sparse_reward(checkpoint=False, collision=terminated)
         else:
             raise ValueError(f"Unknown reward type: {reward_type}")
+
 
     def _update_episode_stats(
         self, obs: dict, terminated: bool, truncated: bool, reward: float = 0.0

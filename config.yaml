@@ -1,106 +1,64 @@
 env:
-  camera_resolution: [84, 84]      # H x W — matches the 84x84 Camera in the MAX/noTilt smoke .wbt worlds
+  camera_resolution: [84, 84]
 
 action_space:
-  type: continuous                  # overridden by --agent flag in train.py
+  type: continuous
 
 observation:
-  # Convert RGB → single-channel grayscale. When true, the camera observation
-  # has shape (H, W, 1); when false, (H, W, 3). Bounds/dtype stay float32 [0, 1].
   grayscale: false
-  # Speed (m/s) used to normalise state[0]. Speeds above this are clipped to 1.0.
   max_speed: 15.0
-  # If true, LiDAR ranges are scaled from [0, lidar_max_range] → [0, 1].
-  # If false, ranges pass through as float32 metres and the obs-space upper
-  # bound becomes lidar_max_range instead of 1.0.
   normalize_lidar: true
-  # Upper bound (m) used to normalise LiDAR ranges. Set to 30 to align with the
-  # maxRange of the MAX/noTilt smoke .wbt LiDARs. KNOWN MISMATCH: get_lidar_scan()
-  # still clips raw ranges to 10 m (the body-noise sentinel), so with this at 30
-  # the normalised scan only spans [0, 1/3]. Re-tuning that clip to maxRange is
-  # tracked as Round-3 future work; left as-is here to isolate the camera bug fix.
   lidar_max_range: 30.0
 
 reward:
-  type: dense_v2                    # overridden by --reward flag in train.py
-  # ── v1 weights (legacy: dense / ttc) ──
-  w1: 1.0                           # progress weight
-  w2: 1.5                           # alignment / deviation penalty weight
-  w3: 1.5                           # collision / safety weight
-  # ttc-only
-  w4: 10.0                          # terminal penalty weight
-  d_safe: 1.0                       # safety radius (metres)
-  # collision detection threshold (shared)
-  collision_threshold: 0.35          # metres — LiDAR below this → terminated
-  # ── v2 weights (dense_v2 / ttc_v2) ──
-  w_progress: 1.0                   # multiplier on distance-delta progress (m/step)
-  w_lap: 50.0                       # one-off bonus when a lap closes
-  w_collision: 100.0                # collision penalty magnitude (applied negated)
-  w_line_lost: 0.8                  # per-step penalty while the yellow line is lost (lowered from 1.0 to avoid reward-hack: at 14 m/s progress max ≈ 0.14/step, so 1.0/step made line-lost dominate)
-  # ttc_v2 only
-  w_safety: 2.0                     # proximity-penalty weight
-  d_safe_v2: 0.5                    # m — safety fires only inside this radius (½ of v1 d_safe)
+  type: dense
+  w_progress: 100.0       # rewards signed forward progress (m); ~1.1 at full speed, now competitive with alignment penalty
+  w_alignment: 0.70      # quadratic penalty on lateral offset, decoupled from speed
+  w_alignment_bonus: 0.60  # positive reward for being centred on the line: bonus = w * (1 - |theta_norm|), max at theta_norm=0
+  w_speed: 10.0          # direct bonus on forward speed (m/s) — encourages going fast once aligned
+  w_line_lost: 1.0      # flat per-step penalty while the yellow line is not visible
+  w_lap: 50.0           # one-off bonus when a full lap is completed
+  w_collision: 5.0    # terminal collision penalty
+  collision_threshold: 0.35
 
 agent:
-  learning_rate: 3.0e-4
+  n_steps: 1024
+  learning_rate: 0.0007234279845665417
   batch_size: 64
-  gamma: 0.99
+  gamma: 0.9887130386924259
+  gae_lambda: 0.9286203127474678
+  clip_range: 0.13301557735830305
+  ent_coef: 3.3645796728451706e-07
+  n_epochs: 6
   buffer_size: 10000
 
 training:
-  total_timesteps: 500000          # reduce for a quick smoke test
-  checkpoint_every_n_steps: 10000  # Save a checkpoint every N timesteps (0 disables)
+  total_timesteps: 500000
+  checkpoint_every_n_steps: 10000
 
 episode:
-  max_steps: 100000            # Truncate episode after this many steps (0 disables) — 100s at 10ms/step
-  stall_speed_threshold: 0     # m/s — below this counts as "stalled"
-  stall_steps: 1500            # Consecutive stalled steps before truncation — 15s at 10ms/step
+  max_steps: 100000
+  stall_speed_threshold: 1.0   # m/s — prevents the agent from creeping to avoid risk
+  stall_steps: 1500
 
 monitoring:
-  # LiDAR distance (m) below which a step counts as a near-miss (but not a
-  # collision). A near-miss is a step where the closest LiDAR reading is in
-  # the band (collision_threshold, near_miss_threshold].
-  near_miss_threshold: 1.0        # metres
-  # Lap detection: the car must first travel this far from spawn...
-  lap_departure_distance: 20.0    # metres
-  # ...then return within this distance to register a lap completion.
-  lap_return_distance: 5.0        # metres
-  # Print a metrics summary every N completed episodes during training.
+  near_miss_threshold: 1.0
+  lap_departure_distance: 20.0
+  lap_return_distance: 5.0
   summary_every_n_episodes: 10
-  # Write training metrics to a CSV file in results/.
   csv_log: true
 
 obstacles:
-  # Master switch. When false the obstacle subsystem is fully inert — no
-  # nodes are spawned, no per-step work is done. Enable via --obstacles in
-  # train.py / evaluate.py (which sets this to true at runtime).
   enabled: false
-  # Spawn cadence is measured in car-travel distance rather than wallclock
-  # or sim steps, so behaviour is independent of vehicle speed and time-step.
-  spawn_interval_min_m: 30.0      # metres of progress before a new spawn is allowed (min)
-  spawn_interval_max_m: 70.0      # metres of progress before a new spawn is allowed (max)
-  # Where (relative to the car) to place a freshly-spawned barrel.
-  distance_ahead_min: 15.0        # metres ahead of the car (min)
-  distance_ahead_max: 35.0        # metres ahead of the car (max)
-  # Hard safety floor — the spawn distance is clipped up to at least this
-  # value so a barrel can never appear right in front of the car.
-  min_spawn_distance: 10.0        # metres
-  # Lateral spread, perpendicular to the car's forward axis, sampled
-  # uniformly in [-lateral_offset_max, +lateral_offset_max]. The road half
-  # the car drives on is ~10.75m wide, so ±4m keeps barrels in-lane.
-  lateral_offset_max: 4.0         # metres
-  # Cap on simultaneous barrels in the scene at any one time.
+  spawn_interval_min_m: 30.0
+  spawn_interval_max_m: 70.0
+  distance_ahead_min: 15.0
+  distance_ahead_max: 35.0
+  min_spawn_distance: 10.0
+  lateral_offset_max: 4.0
   max_active: 3
-  # Distance (m) the car must be past a barrel before it is recycled
-  # (removed from the scene). Slight buffer so a barrel doesn't vanish the
-  # instant the bumper passes it.
-  recycle_behind_distance: 3.0    # metres
-  # Physical dimensions of the barrel (visual + boundingObject).
-  barrel_radius: 0.4              # metres
-  barrel_height: 1.0              # metres
-  # Z-coordinate of the barrel centre (this world uses ENU / Z-up). With
-  # height=1.0 and Z=0.5 the cylinder sits flush on the Z=0 ground plane.
+  recycle_behind_distance: 3.0
+  barrel_radius: 0.4
+  barrel_height: 1.0
   barrel_z: 0.5
-  # RGB baseColor for the barrel's PBRAppearance. Orange is the canonical
-  # traffic-cone hue and contrasts strongly against the road surface.
   barrel_color: [1.0, 0.4, 0.0]

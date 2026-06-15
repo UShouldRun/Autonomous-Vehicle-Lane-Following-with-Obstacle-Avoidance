@@ -553,7 +553,7 @@ class WebotsEnv:
         cols = np.where(mask.any(axis=0))[0]
 
         if len(cols) == 0:
-            return 2.0, False
+            return 1.0, False
 
         cx     = float(cols.mean())
         centre = self.cam_w / 2.0
