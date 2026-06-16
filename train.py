@@ -418,12 +418,12 @@ def main():
     initial_lr = float(agent_cfg["learning_rate"])
 
     if args.lr_schedule == "linear":
-        # LinearSchedule(schedule_timesteps, final_p, initial_p) returns a
-        # callable that SB3 calls with the remaining-progress fraction.
+        # SB3 LinearSchedule takes (initial_p, end_p) and returns a callable
+        # that receives the remaining progress fraction (1.0 → 0.0 over training).
         learning_rate = LinearSchedule(
             initial_lr,
-            0.0,              
-            end_fraction=0.0  
+            0.0,
+            end_fraction=1.0,
         )
     else:
         learning_rate = initial_lr
@@ -523,3 +523,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

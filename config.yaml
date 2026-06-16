@@ -1,45 +1,56 @@
 env:
-  camera_resolution: [84, 84]
+  camera_resolution: [128, 128]
 
 action_space:
   type: continuous
 
 observation:
   grayscale: false
-  max_speed: 15.0
+  max_speed: 50.0
   normalize_lidar: true
   lidar_max_range: 30.0
 
 reward:
   type: dense
-  w_progress: 100.0       # rewards signed forward progress (m); ~1.1 at full speed, now competitive with alignment penalty
-  w_alignment: 0.70      # quadratic penalty on lateral offset, decoupled from speed
-  w_alignment_bonus: 0.60  # positive reward for being centred on the line: bonus = w * (1 - |theta_norm|), max at theta_norm=0
-  w_speed: 10.0          # direct bonus on forward speed (m/s) — encourages going fast once aligned
-  w_line_lost: 1.0      # flat per-step penalty while the yellow line is not visible
-  w_lap: 50.0           # one-off bonus when a full lap is completed
-  w_collision: 5.0    # terminal collision penalty
+
+  # Progress is gated by alignment_factor inside dense_reward,
+  # so the car only earns forward reward while roughly aligned.
+  w_progress: 2.0
+  w_speed: 2.0
+
+  # Alignment heavily boosted — centering on the line is the primary objective.
+  w_alignment_penalty: 10.0
+  w_alignment_bonus: 2.0
+
+  w_line_lost: 20.0
+  w_existence: 0.01
+  w_lap: 50.0
+  w_collision: 100.0
+  w_near_miss: 5.0
+
+  w_sigmoid: 10.0
+
   collision_threshold: 0.35
 
 agent:
-  n_steps: 1024
-  learning_rate: 0.0007234279845665417
+  n_steps: 2048
+  learning_rate: 0.0003
   batch_size: 64
-  gamma: 0.9887130386924259
-  gae_lambda: 0.9286203127474678
-  clip_range: 0.13301557735830305
-  ent_coef: 3.3645796728451706e-07
-  n_epochs: 6
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  n_epochs: 10
   buffer_size: 10000
 
 training:
-  total_timesteps: 500000
+  total_timesteps: 1000000
   checkpoint_every_n_steps: 10000
 
 episode:
-  max_steps: 100000
-  stall_speed_threshold: 1.0   # m/s — prevents the agent from creeping to avoid risk
-  stall_steps: 1500
+  max_steps: 5000
+  stall_speed_threshold: 0.1
+  stall_steps: 300
 
 monitoring:
   near_miss_threshold: 1.0
@@ -62,3 +73,4 @@ obstacles:
   barrel_height: 1.0
   barrel_z: 0.5
   barrel_color: [1.0, 0.4, 0.0]
+

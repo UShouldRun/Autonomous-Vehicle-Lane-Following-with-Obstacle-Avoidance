@@ -1,25 +1,4 @@
-"""
-observation.py — Observation pre-processing utilities.
-
-Converts the raw sensor dict produced by ``WebotsLaneEnv._get_raw_obs()`` into
-a normalised dict suitable for feeding into a neural-network policy, and
-builds the Gym ``Dict`` space that matches this normalised layout.
-
-All transforms are pure: their input arrays are not mutated.
-
-Raw → normalised channel summary
---------------------------------
-camera : uint8   (H, W, 3)   in [0, 255]   → float32 (H, W, 1|3) in [0, 1]
-lidar  : float32 (lidar_size,) in [0, max_range]
-                                             → float32 (lidar_size,) in [0, 1]
-state  : float32 (3,)  [speed m/s, alignment ∈ [-2, 2], line_visible ∈ {0,1}]
-                                             → float32 (3,) [speed/max_speed clipped
-                                                             to [0, 1], alignment,
-                                                             line_visible]
-"""
-
 from typing import Dict
-
 import numpy as np
 import cv2
 from gymnasium import spaces
@@ -44,13 +23,15 @@ def normalize_camera(img: np.ndarray, grayscale: bool = False) -> np.ndarray:
 def normalize_state(state: np.ndarray, max_speed: float) -> np.ndarray:
     """Normalise the vehicle-state vector.
 
-    state[0] — speed in m/s, divided by ``max_speed`` and clipped to [0, 1].
-    state[1] — alignment proxy ∈ [-2, 2] (2.0 when line lost); passes through unchanged.
+    state[0] — speed in m/s, divided by ``max_speed`` (converted from km/h to m/s)
+               and clipped to [0, 1].
+    state[1] — alignment proxy ∈ [-1, 1] (1.0 when line lost); passes through unchanged.
     state[2] — line-visible flag in {0, 1}; passes through unchanged.
     """
     out = state.astype(np.float32).copy()
-    denom = max(float(max_speed), 1e-6)
-    out[0] = float(np.clip(out[0] / denom, 0.0, 1.0))
+    # max_speed in config is expressed in km/h — convert to m/s for correct normalisation.
+    max_speed_ms = max(float(max_speed) / 3.6, 1e-6)
+    out[0] = float(np.clip(out[0] / max_speed_ms, 0.0, 1.0))
     return out
 
 
@@ -68,9 +49,10 @@ def preprocess_obs(obs: Dict[str, np.ndarray], config: dict) -> Dict[str, np.nda
     """
     obs_cfg    = config.get("observation", {}) or {}
     grayscale  = bool(obs_cfg.get("grayscale", False))
-    max_speed  = float(obs_cfg.get("max_speed", 15.0))
+    max_speed  = float(obs_cfg.get("max_speed", 50.0))
     norm_lidar = bool(obs_cfg.get("normalize_lidar", True))
-    lidar_max  = float(obs_cfg.get("lidar_max_range", 10.0))
+    # Adjusted default value to 30.0 to match runtime config environments
+    lidar_max  = float(obs_cfg.get("lidar_max_range", 30.0))
 
     out = {
         "camera": normalize_camera(obs["camera"], grayscale=grayscale),
@@ -95,7 +77,7 @@ def build_observation_space(
     obs_cfg    = config.get("observation", {}) or {}
     grayscale  = bool(obs_cfg.get("grayscale", False))
     norm_lidar = bool(obs_cfg.get("normalize_lidar", True))
-    lidar_max  = float(obs_cfg.get("lidar_max_range", 10.0))
+    lidar_max  = float(obs_cfg.get("lidar_max_range", 30.0))
 
     cam_channels = 1 if grayscale else 3
     camera_space = spaces.Box(
@@ -113,11 +95,11 @@ def build_observation_space(
             low=0.0, high=float(lidar_max), shape=(lidar_size,), dtype=np.float32,
         )
 
-    # state[0] = speed/max_speed ∈ [0, 1]; state[1] = alignment angle ∈ [-2, 2];
-    # state[2] = line_visible flag ∈ {0, 1}
+    # Corrected alignment tracking bounds from [-2.0, 2.0] down to [-1.0, 1.0]
+    # to perfectly reflect WebotsEnv.get_alignment_angle implementation.
     state_space = spaces.Box(
-        low=np.array([0.0, -2.0, 0.0], dtype=np.float32),
-        high=np.array([1.0, 2.0, 1.0], dtype=np.float32),
+        low=np.array([0.0, -1.0, 0.0], dtype=np.float32),
+        high=np.array([1.0, 1.0, 1.0], dtype=np.float32),
         dtype=np.float32,
     )
 
@@ -126,3 +108,4 @@ def build_observation_space(
         "lidar":  lidar_space,
         "state":  state_space,
     })
+

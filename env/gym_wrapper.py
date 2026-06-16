@@ -74,11 +74,21 @@ class WebotsLaneEnv(gym.Env):
         )
 
         if self._action_type == "continuous":
-            # [steering, throttle] both in [-1, 1]
-            self.action_space = spaces.Box(-1.0, 1.0, shape=(2,), dtype=np.float32)
+            # steering in [-1, 1], throttle in [0, 1] (forward-only).
+            # Clamping throttle to [0, 1] eliminates reverse driving entirely:
+            # - PPO initialises near the action-space centre → throttle≈0.5 → ~25 km/h
+            #   so the car moves forward from the very first episode.
+            # - Halves the throttle exploration space, making learning faster.
+            # - Reverse is not needed for lane-following; allowing it only teaches
+            #   the agent to exploit backward movement to avoid collisions.
+            self.action_space = spaces.Box(
+                low=np.array([-1.0, 0.0], dtype=np.float32),
+                high=np.array([1.0,  1.0], dtype=np.float32),
+                dtype=np.float32,
+            )
         else:
-            # 0=left  1=right  2=straight  3=brake
-            self.action_space = spaces.Discrete(4)
+            # 0=hard-left  1=hard-right  2=gentle-left  3=gentle-right  4=straight
+            self.action_space = spaces.Discrete(5)
 
         self._current_stats: Optional[EpisodeStats]  = None
         self._completed_episodes: List[EpisodeStats] = []
@@ -95,11 +105,8 @@ class WebotsLaneEnv(gym.Env):
         self._episode_start_time = float(self._hw.driver.getTime())
         self._step_count         = 0
         self._stall_counter      = 0
-        # 0.0 right after a reset (forward-distance tracking was just zeroed).
-        # We track SIGNED forward displacement so reverses produce a negative
-        # distance_delta and v2's progress term penalises backward-driving
-        # reward hacking (Round 3 finding).
         self._prev_distance      = self._hw.get_forward_distance()
+        self._prev_theta_norm: float = None  # for theta-improvement bonus
 
         return self._get_obs(), {}
 
@@ -145,15 +152,21 @@ class WebotsLaneEnv(gym.Env):
         elif self._max_steps > 0 and self._step_count >= self._max_steps:
             truncated = True
             termination_reason = "max_steps"
-        elif self._stall_counter >= self._stall_steps:
-            truncated = True
-            termination_reason = "stalled"
         else:
             termination_reason = ""
+        # NOTE: stall detection disabled — throttle is clamped to [0,1] so
+        # the car always moves forward. Re-enable if you allow reverse later.
 
-        reward = self._compute_reward(raw_obs, terminated, distance_delta)
-        print(f"reward: {reward:+.4f}")
-        print("\033[F\033[F\033[F\033[F\033[F", end="", flush=True)
+        reward = self._compute_reward(raw_obs, terminated, distance_delta,
+                                      self._prev_theta_norm)
+        # Update prev_theta for next step's improvement bonus
+        self._prev_theta_norm = float(raw_obs["state"][1])
+        # Live debug: show line detection status every step so issues are visible immediately.
+        theta = float(raw_obs["state"][1])
+        line_ok = float(raw_obs["state"][2]) > 0.5
+        spd = float(raw_obs["state"][0])
+        print(f"\rstep={self._step_count:5d}  line={'YES' if line_ok else ' NO'}  "
+              f"theta={theta:+.3f}  spd={spd:5.2f}m/s  rew={reward:+8.3f}   ", end="", flush=True)
         self._update_episode_stats(raw_obs, terminated, truncated, reward)
         obs = preprocess_obs(raw_obs, self.config)
 
@@ -198,20 +211,23 @@ class WebotsLaneEnv(gym.Env):
         return yellow_score == 2.0
 
     
-    def _compute_reward(self, obs: dict, terminated: bool, distance_delta: float) -> float:
+    def _compute_reward(self, obs: dict, terminated: bool, distance_delta: float,
+                        prev_theta_norm: float = None) -> float:
         state         = obs["state"]
-        v             = float(state[0])      # forward speed (m/s)
-        theta_norm    = float(state[1])      # lateral offset proxy ∈ [-1, 1]
+        v             = float(state[0])
+        theta_norm    = float(state[1])
         line_lost     = float(state[2]) < 0.5
         cfg           = self._reward_cfg
 
-        reward_type   = cfg.get("type", "dense_reward")
+        reward_type   = cfg.get("type", "dense")
         lap_completed = self._hw.get_lap_completed()
- 
+
         if reward_type == "dense":
             return dense_reward(v, theta_norm, line_lost,
                             lap_completed, terminated, cfg,
-                            distance_delta=distance_delta)
+                            distance_delta=distance_delta,
+                            near_miss=self._hw.is_near_miss(),
+                            prev_theta_norm=prev_theta_norm)
         elif reward_type == "sparse":
             return sparse_reward(checkpoint=False, collision=terminated)
         else:
@@ -256,3 +272,4 @@ class WebotsLaneEnv(gym.Env):
     def completed_episodes(self) -> List[EpisodeStats]:
         """All episodes that have terminated or been truncated so far."""
         return self._completed_episodes
+
