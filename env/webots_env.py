@@ -388,40 +388,28 @@ class WebotsEnv:
         hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
         h, w = hsv.shape[:2]
 
-        # Save a debug frame on the very first call so you can inspect what the
-        # camera actually sees and tune HSV bounds if needed.
         if not hasattr(self, "_debug_saved"):
             self._debug_saved = True
             try:
-                cv2.imwrite("/tmp/debug_camera_rgb.png",
-                            cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+                cv2.imwrite("/tmp/debug_camera_rgb.png", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
                 cv2.imwrite("/tmp/debug_camera_hsv.png", hsv)
                 print("[debug] Saved camera frame → /tmp/debug_camera_rgb.png")
                 print("[debug] Saved HSV frame    → /tmp/debug_camera_hsv.png")
+
             except Exception as exc:
                 print(f"[debug] Could not save frame: {exc}")
 
-        # Use the lower 70% of the frame so the lines are captured on curves.
         roi = hsv[int(h * 0.30):, :]
-
-        # Yellow line colour in city_level1.wbt is RoadLine color 0.85 0.75 0.3
-        # which maps to HSV ≈ (25, 165, 216).  Bounds are widened for lighting.
         mask = cv2.inRange(roi, YELLOW_LO, YELLOW_HI)
-
-        # DO NOT use MORPH_OPEN — it erodes thin lines (1-2px at 84x84) to zero.
-        # MORPH_CLOSE only: dilate then erode — fills tiny gaps without destroying lines.
         kernel = np.ones((2, 2), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
-        M = cv2.moments(mask)
+        NEAR_ROWS = 30  # only use the bottom N rows (nearest to car)
+        near_mask = mask[-NEAR_ROWS:, :]
+        M = cv2.moments(near_mask)
 
-        # Minimum 50px² — requires a real line blob, not noise or a stray pixel.
-        # At 128x128 resolution a thin line across ~30% of the ROI ≈ 100-300px².
-        MIN_PIX = 80.0
+        MIN_PIX = 60.0
 
-        # Save the mask on the first call so you can inspect detection quality:
-        #   open /tmp/debug_mask_roi.png  ← white = detected yellow
-        #   open /tmp/debug_camera_rgb.png ← what the camera actually sees
         if not hasattr(self, "_mask_saved"):
             self._mask_saved = True
             try:
@@ -430,10 +418,10 @@ class WebotsEnv:
                 pass
 
         if M["m00"] < MIN_PIX:
-            # Full-image fallback for tight curves where line exits the bottom crop.
             mask_full = cv2.inRange(hsv, YELLOW_LO, YELLOW_HI)
             mask_full = cv2.morphologyEx(mask_full, cv2.MORPH_CLOSE, kernel)
-            M = cv2.moments(mask_full)
+            near_mask_full = mask_full[-NEAR_ROWS:, :]
+            M = cv2.moments(near_mask_full)
             if M["m00"] < MIN_PIX:
                 return 1.0, False
 

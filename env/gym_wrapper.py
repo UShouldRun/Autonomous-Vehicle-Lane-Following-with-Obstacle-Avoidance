@@ -106,7 +106,7 @@ class WebotsLaneEnv(gym.Env):
         self._step_count         = 0
         self._stall_counter      = 0
         self._prev_distance      = self._hw.get_forward_distance()
-        self._prev_theta_norm: float = None  # for theta-improvement bonus
+        self._prev_theta: float = None  # for theta-improvement bonus
 
         return self._get_obs(), {}
 
@@ -142,8 +142,11 @@ class WebotsLaneEnv(gym.Env):
         else:
             self._stall_counter = 0
 
+        theta, line_visible = self._hw.get_alignment_angle()
+        line_lost = self._yellow_line_is_not_visible(line_visible)
+
         # Termination check — physics-based touch sensor, no LiDAR threshold.
-        terminated = self._is_collision() # or self._yellow_line_is_not_visible(raw_obs["state"][1])
+        terminated = self._is_collision() or line_lost
         truncated  = False
 
         # Truncation checks (after collision, before reward).
@@ -154,20 +157,19 @@ class WebotsLaneEnv(gym.Env):
             termination_reason = "max_steps"
         else:
             termination_reason = ""
-        # NOTE: stall detection disabled — throttle is clamped to [0,1] so
-        # the car always moves forward. Re-enable if you allow reverse later.
 
-        reward = self._compute_reward(raw_obs, terminated, distance_delta,
-                                      self._prev_theta_norm)
-        # Update prev_theta for next step's improvement bonus
-        self._prev_theta_norm = float(raw_obs["state"][1])
-        # Live debug: show line detection status every step so issues are visible immediately.
-        theta = float(raw_obs["state"][1])
-        line_ok = float(raw_obs["state"][2]) > 0.5
+        reward = self._compute_reward(
+            raw_obs, terminated, line_lost, distance_delta,
+            theta, self._prev_theta
+        )
+
+        self._prev_theta = float(theta)
         spd = float(raw_obs["state"][0])
-        print(f"\rstep={self._step_count:5d}  line={'YES' if line_ok else ' NO'}  "
+
+        print(f"\rstep={self._step_count:5d}  line={'YES' if not line_lost else ' NO'}  "
               f"theta={theta:+.3f}  spd={spd:5.2f}m/s  rew={reward:+8.3f}   ", end="", flush=True)
-        self._update_episode_stats(raw_obs, terminated, truncated, reward)
+
+        self._update_episode_stats(raw_obs, terminated, truncated, theta, reward)
         obs = preprocess_obs(raw_obs, self.config)
 
         return obs, reward, terminated, truncated, {"termination_reason": termination_reason}
@@ -189,12 +191,11 @@ class WebotsLaneEnv(gym.Env):
         cam_h, cam_w = self.config["env"]["camera_resolution"]
         raw = self._hw.get_camera_image()
         img = cv2.resize(raw, (cam_w, cam_h))
-        theta_norm, line_visible = self._hw.get_alignment_angle()
         return {
             "camera": img,
             "lidar":  self._hw.get_lidar_scan(),
             "state":  np.array(
-                [self._hw.get_forward_speed(), theta_norm, float(line_visible)],
+                [self._hw.get_forward_speed()],
                 dtype=np.float32,
             ),
         }
@@ -208,26 +209,23 @@ class WebotsLaneEnv(gym.Env):
         return self._hw.is_collision()
 
     def _yellow_line_is_not_visible(self, yellow_score: float) -> bool:
-        return yellow_score == 2.0
-
+        return yellow_score < 0.5
     
-    def _compute_reward(self, obs: dict, terminated: bool, distance_delta: float,
-                        prev_theta_norm: float = None) -> float:
+    def _compute_reward(self, obs: dict, terminated: bool, line_lost: bool, distance_delta: float, theta: float,
+                        prev_theta: float = None) -> float:
         state         = obs["state"]
         v             = float(state[0])
-        theta_norm    = float(state[1])
-        line_lost     = float(state[2]) < 0.5
         cfg           = self._reward_cfg
 
         reward_type   = cfg.get("type", "dense")
         lap_completed = self._hw.get_lap_completed()
 
         if reward_type == "dense":
-            return dense_reward(v, theta_norm, line_lost,
+            return dense_reward(v, theta, line_lost,
                             lap_completed, terminated, cfg,
                             distance_delta=distance_delta,
                             near_miss=self._hw.is_near_miss(),
-                            prev_theta_norm=prev_theta_norm)
+                            prev_theta=prev_theta)
         elif reward_type == "sparse":
             return sparse_reward(checkpoint=False, collision=terminated)
         else:
@@ -235,7 +233,7 @@ class WebotsLaneEnv(gym.Env):
 
 
     def _update_episode_stats(
-        self, obs: dict, terminated: bool, truncated: bool, reward: float = 0.0
+        self, obs: dict, terminated: bool, truncated: bool, theta: float, reward: float = 0.0
     ) -> None:
         """Fold the latest step into the current EpisodeStats. On episode end,
         finalise the record and append it to the completed-episodes list."""
@@ -245,7 +243,7 @@ class WebotsLaneEnv(gym.Env):
 
         stats.total_steps  += 1
         stats.total_reward += float(reward)
-        stats.cross_track_errors.append(abs(float(obs["state"][1])))
+        stats.cross_track_errors.append(abs(theta))
         stats.distance_travelled = self._hw.get_distance_travelled()
 
         if self._hw.is_near_miss():

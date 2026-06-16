@@ -15,14 +15,14 @@ def sigmoid(x: float) -> float:
 
 def dense_reward(
     forward_speed: float,
-    theta_norm: float,
+    theta: float,
     line_lost: bool,
     lap_completed: bool,
     collision: bool,
     cfg: dict,
     distance_delta: float = 0.0,
     near_miss: bool = False,
-    prev_theta_norm: float = None,
+    prev_theta: float = None,
 ) -> float:
     """
     Dense tracking reward with alignment as the primary learning signal.
@@ -48,18 +48,18 @@ def dense_reward(
     w_sigmoid           = float(cfg.get("w_sigmoid", 10.0))
 
     if collision:
-        return w_sigmoid * (sigmoid(float(-w_collision)) - 1/2)
+        return float(-w_collision)
     if line_lost:
-        return w_sigmoid * (sigmoid(float(-w_line_lost)) - 1/2)
+        return float(-w_line_lost)
 
-    if prev_theta_norm is not None:
-        theta_improvement = np.clip(abs(prev_theta_norm) - abs(theta_norm), -0.5, 0.5)
+    if prev_theta is not None:
+        theta_improvement = np.clip(abs(prev_theta) - abs(theta), -0.5, 0.5)
         theta_improve_bonus = w_theta_improve * theta_improvement
     else:
         theta_improve_bonus = 0.0
 
-    alignment_penalty = w_alignment_penalty * np.exp(- 2 * (1 - abs(theta_norm) ** 1/2))
-    alignment_bonus   = w_alignment_bonus * np.exp(- 2 * abs(theta_norm) ** 1/2)
+    alignment_penalty = w_alignment_penalty * abs(theta)
+    alignment_bonus   = w_alignment_bonus * (1 - abs(theta))
 
     gated_progress = w_progress * distance_delta * (1 + alignment_bonus)
 
@@ -81,7 +81,7 @@ def dense_reward(
         - near_miss_penalty
     )
 
-    return w_sigmoid * (sigmoid(float(reward)) - 1/2)
+    return float(reward)
 
 def sparse_reward(checkpoint: bool, collision: bool) -> float:
     """+1 on checkpoint/lap, -1 on collision, 0 otherwise."""

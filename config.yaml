@@ -20,7 +20,7 @@ reward:
 
   # Alignment heavily boosted — centering on the line is the primary objective.
   w_alignment_penalty: 10.0
-  w_alignment_bonus: 2.0
+  w_alignment_bonus: 4.0
 
   w_line_lost: 20.0
   w_existence: 0.01

@@ -7,7 +7,14 @@ from gymnasium import spaces
 # ── Individual normalisers ──────────────────────────────────────────────────
 
 def normalize_camera(img: np.ndarray, grayscale: bool = False) -> np.ndarray:
-    """Convert a uint8 RGB image to float32 in [0, 1].
+    """Convert/keep an RGB image as uint8 in [0, 255], channels-last (H, W, C).
+
+    Deliberately NOT scaled to float here: SB3's ``is_image_space()`` only
+    recognises a Box as an image when dtype == uint8 and bounds are
+    [0, 255]. If we pre-normalize to float32 [0, 1], CombinedExtractor
+    silently treats the camera as a flat vector and never runs a CNN on it.
+    SB3's CombinedExtractor/NatureCNN divides by 255.0 internally
+    (normalize_images=True by default), so scaling here would double-normalize.
 
     If ``grayscale`` is True the RGB channels are collapsed and a trailing
     singleton dimension is kept, so the output shape is (H, W, 1) — keeping
@@ -16,8 +23,8 @@ def normalize_camera(img: np.ndarray, grayscale: bool = False) -> np.ndarray:
     """
     if grayscale:
         gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-        return (gray.astype(np.float32) / 255.0)[..., None]
-    return img.astype(np.float32) / 255.0
+        return gray.astype(np.uint8)[..., None]
+    return img.astype(np.uint8)
 
 
 def normalize_state(state: np.ndarray, max_speed: float) -> np.ndarray:
@@ -25,8 +32,6 @@ def normalize_state(state: np.ndarray, max_speed: float) -> np.ndarray:
 
     state[0] — speed in m/s, divided by ``max_speed`` (converted from km/h to m/s)
                and clipped to [0, 1].
-    state[1] — alignment proxy ∈ [-1, 1] (1.0 when line lost); passes through unchanged.
-    state[2] — line-visible flag in {0, 1}; passes through unchanged.
     """
     out = state.astype(np.float32).copy()
     # max_speed in config is expressed in km/h — convert to m/s for correct normalisation.
@@ -56,7 +61,7 @@ def preprocess_obs(obs: Dict[str, np.ndarray], config: dict) -> Dict[str, np.nda
 
     out = {
         "camera": normalize_camera(obs["camera"], grayscale=grayscale),
-        "state":  normalize_state(obs["state"], max_speed=max_speed),
+        "state":  normalize_state(np.array([obs["state"][0]], dtype=np.float32), max_speed=max_speed),
         "lidar":  (
             normalize_lidar(obs["lidar"], max_range=lidar_max)
             if norm_lidar
@@ -81,9 +86,9 @@ def build_observation_space(
 
     cam_channels = 1 if grayscale else 3
     camera_space = spaces.Box(
-        low=0.0, high=1.0,
+        low=0, high=255,
         shape=(cam_h, cam_w, cam_channels),
-        dtype=np.float32,
+        dtype=np.uint8,
     )
 
     if norm_lidar:
@@ -98,8 +103,8 @@ def build_observation_space(
     # Corrected alignment tracking bounds from [-2.0, 2.0] down to [-1.0, 1.0]
     # to perfectly reflect WebotsEnv.get_alignment_angle implementation.
     state_space = spaces.Box(
-        low=np.array([0.0, -1.0, 0.0], dtype=np.float32),
-        high=np.array([1.0, 1.0, 1.0], dtype=np.float32),
+        low=np.array([0.0], dtype=np.float32),
+        high=np.array([1.0], dtype=np.float32),
         dtype=np.float32,
     )
 
@@ -108,4 +113,3 @@ def build_observation_space(
         "lidar":  lidar_space,
         "state":  state_space,
     })
-

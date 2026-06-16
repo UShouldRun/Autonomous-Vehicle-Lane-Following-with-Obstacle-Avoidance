@@ -21,7 +21,7 @@ except ModuleNotFoundError:
 from stable_baselines3 import PPO, DQN
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.env_checker import check_env
-from stable_baselines3.common.utils import LinearSchedule
+from stable_baselines3.common.utils import get_linear_fn
 
 from env.gym_wrapper import WebotsLaneEnv
 from utils.metrics import summarise
@@ -418,9 +418,10 @@ def main():
     initial_lr = float(agent_cfg["learning_rate"])
 
     if args.lr_schedule == "linear":
-        # SB3 LinearSchedule takes (initial_p, end_p) and returns a callable
-        # that receives the remaining progress fraction (1.0 → 0.0 over training).
-        learning_rate = LinearSchedule(
+        # get_linear_fn(start, end, end_fraction) returns a callable that
+        # receives the remaining progress fraction (1.0 → 0.0 over training)
+        # and linearly interpolates start → end over the full course of training.
+        learning_rate = get_linear_fn(
             initial_lr,
             0.0,
             end_fraction=1.0,
@@ -523,4 +524,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
