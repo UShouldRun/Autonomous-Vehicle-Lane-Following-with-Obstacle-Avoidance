@@ -4,8 +4,6 @@ import cv2
 from gymnasium import spaces
 
 
-# ── Individual normalisers ──────────────────────────────────────────────────
-
 def normalize_camera(img: np.ndarray, grayscale: bool = False) -> np.ndarray:
     """Convert/keep an RGB image as uint8 in [0, 255], channels-last (H, W, C).
 
@@ -46,8 +44,6 @@ def normalize_lidar(scan: np.ndarray, max_range: float) -> np.ndarray:
     return np.clip(scan.astype(np.float32) / denom, 0.0, 1.0)
 
 
-# ── Combined transforms ─────────────────────────────────────────────────────
-
 def preprocess_obs(obs: Dict[str, np.ndarray], config: dict) -> Dict[str, np.ndarray]:
     """Apply all three normalisations according to the ``observation`` section
     of ``config``. Returns a new dict; ``obs`` is not mutated.
@@ -56,7 +52,6 @@ def preprocess_obs(obs: Dict[str, np.ndarray], config: dict) -> Dict[str, np.nda
     grayscale  = bool(obs_cfg.get("grayscale", False))
     max_speed  = float(obs_cfg.get("max_speed", 50.0))
     norm_lidar = bool(obs_cfg.get("normalize_lidar", True))
-    # Adjusted default value to 30.0 to match runtime config environments
     lidar_max  = float(obs_cfg.get("lidar_max_range", 30.0))
 
     out = {
@@ -100,8 +95,6 @@ def build_observation_space(
             low=0.0, high=float(lidar_max), shape=(lidar_size,), dtype=np.float32,
         )
 
-    # Corrected alignment tracking bounds from [-2.0, 2.0] down to [-1.0, 1.0]
-    # to perfectly reflect WebotsEnv.get_alignment_angle implementation.
     state_space = spaces.Box(
         low=np.array([0.0], dtype=np.float32),
         high=np.array([1.0], dtype=np.float32),

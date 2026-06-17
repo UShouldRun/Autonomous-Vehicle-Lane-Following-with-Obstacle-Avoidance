@@ -7,14 +7,7 @@ TIME_STEP       = 10      # ms — matches basicTimeStep in city.wbt
 MAX_STEER       = 0.5     # radians — max steering angle
 MAX_SPEED       = 50      # km/h — Driver.setCruisingSpeed takes km/h
 
-# Yellow line HSV bounds — widened for robustness across lighting/shadow in Webots.
-# Hue  10-40: covers warm golden-yellow through bright pure yellow (OpenCV H = 0-179).
-# Sat  60+  : excludes near-white road surface (which has low saturation).
-# Val  60+  : handles shadowed sections of the line.
-# Road line color in city_level1.wbt: color 0.85 0.75 0.30 → HSV ≈ (25, 165, 216)
-# Tight bounds to avoid false positives from car interior, sky, buildings.
-# Old bounds [10,60,60]→[40,255,255] matched car upholstery/interior when
-# camera was mis-positioned inside the chassis (z was sideways not up).
+# HSV bounds for the yellow road line
 YELLOW_LO = np.array([18,  80, 120], dtype=np.uint8)
 YELLOW_HI = np.array([35, 255, 255], dtype=np.uint8)
 
@@ -388,17 +381,6 @@ class WebotsEnv:
         hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
         h, w = hsv.shape[:2]
 
-        if not hasattr(self, "_debug_saved"):
-            self._debug_saved = True
-            try:
-                cv2.imwrite("/tmp/debug_camera_rgb.png", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-                cv2.imwrite("/tmp/debug_camera_hsv.png", hsv)
-                print("[debug] Saved camera frame → /tmp/debug_camera_rgb.png")
-                print("[debug] Saved HSV frame    → /tmp/debug_camera_hsv.png")
-
-            except Exception as exc:
-                print(f"[debug] Could not save frame: {exc}")
-
         roi = hsv[int(h * 0.30):, :]
         mask = cv2.inRange(roi, YELLOW_LO, YELLOW_HI)
         kernel = np.ones((2, 2), np.uint8)
@@ -409,13 +391,6 @@ class WebotsEnv:
         M = cv2.moments(near_mask)
 
         MIN_PIX = 60.0
-
-        if not hasattr(self, "_mask_saved"):
-            self._mask_saved = True
-            try:
-                cv2.imwrite("/tmp/debug_mask_roi.png", mask)
-            except Exception:
-                pass
 
         if M["m00"] < MIN_PIX:
             mask_full = cv2.inRange(hsv, YELLOW_LO, YELLOW_HI)

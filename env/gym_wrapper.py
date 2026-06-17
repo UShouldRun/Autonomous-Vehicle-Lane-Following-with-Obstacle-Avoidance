@@ -74,13 +74,7 @@ class WebotsLaneEnv(gym.Env):
         )
 
         if self._action_type == "continuous":
-            # steering in [-1, 1], throttle in [0, 1] (forward-only).
-            # Clamping throttle to [0, 1] eliminates reverse driving entirely:
-            # - PPO initialises near the action-space centre → throttle≈0.5 → ~25 km/h
-            #   so the car moves forward from the very first episode.
-            # - Halves the throttle exploration space, making learning faster.
-            # - Reverse is not needed for lane-following; allowing it only teaches
-            #   the agent to exploit backward movement to avoid collisions.
+            # throttle [0,1]: forward-only; reverse is never useful for lane-following
             self.action_space = spaces.Box(
                 low=np.array([-1.0, 0.0], dtype=np.float32),
                 high=np.array([1.0,  1.0], dtype=np.float32),
@@ -174,20 +168,8 @@ class WebotsLaneEnv(gym.Env):
 
         return obs, reward, terminated, truncated, {"termination_reason": termination_reason}
 
-    def render(self):
-        pass  # Webots renders its own GUI window
-
-    def close(self):
-        pass
-
     def _get_raw_obs(self) -> dict:
-        """Raw sensor dict with physical units and defensive resize.
-
-        Used internally for reward, collision and statistics, which all
-        need unit-bearing values. ``get_alignment_angle()`` reads the raw
-        RGB image in HSV space to locate the yellow line, so this must
-        always run against the un-normalised camera frame.
-        """
+        """Raw sensor dict with physical units and defensive resize."""
         cam_h, cam_w = self.config["env"]["camera_resolution"]
         raw = self._hw.get_camera_image()
         img = cv2.resize(raw, (cam_w, cam_h))

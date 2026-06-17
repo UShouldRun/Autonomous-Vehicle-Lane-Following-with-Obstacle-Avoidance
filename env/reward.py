@@ -1,17 +1,13 @@
 """
 rewards.py — Reward engineering functions for vehicle policy training.
 
-Provides dense tracking rewards with non-flatlining exponential gradients
-and sparse checkpoint fallback functions.
+Provides dense tracking rewards and sparse checkpoint fallback functions.
 """
 
 import numpy as np
 
 # Speed sensor returns m/s. MAX_SPEED_MS = 50 km/h in m/s.
 MAX_SPEED_MS = 50.0 / 3.6   # ≈ 13.89 m/s
-
-def sigmoid(x: float) -> float:
-    return float(1 / (1 + np.exp(-x)))
 
 def dense_reward(
     forward_speed: float,
@@ -39,13 +35,12 @@ def dense_reward(
     w_speed             = float(cfg.get("w_speed", 1.0))
     w_alignment_penalty = float(cfg.get("w_alignment_penalty", 3.0))
     w_alignment_bonus   = float(cfg.get("w_alignment_bonus", 3.0))
-    w_theta_improve     = float(cfg.get("w_theta_improve", 3.0))
+    w_alignment_improve = float(cfg.get("w_alignment_improve", 3.0))
     w_line_lost         = float(cfg.get("w_line_lost", 20.0))
     w_collision         = float(cfg.get("w_collision", 100.0))
     w_lap               = float(cfg.get("w_lap", 50.0))
     w_existence         = float(cfg.get("w_existence", 0.01))
     w_near_miss         = float(cfg.get("w_near_miss", 5.0))
-    w_sigmoid           = float(cfg.get("w_sigmoid", 10.0))
 
     if collision:
         return float(-w_collision)
@@ -53,8 +48,8 @@ def dense_reward(
         return float(-w_line_lost)
 
     if prev_theta is not None:
-        theta_improvement = np.clip(abs(prev_theta) - abs(theta), -0.5, 0.5)
-        theta_improve_bonus = w_theta_improve * theta_improvement
+        theta_improvement = np.clip(abs(prev_theta) - abs(theta), 0.0, 1.0)
+        theta_improve_bonus = w_alignment_improve * theta_improvement
     else:
         theta_improve_bonus = 0.0
 
@@ -87,13 +82,8 @@ def sparse_reward(checkpoint: bool, collision: bool) -> float:
     """+1 on checkpoint/lap, -1 on collision, 0 otherwise."""
     if collision:
         return -1.0
+
     if checkpoint:
         return 1.0
+
     return 0.0
-
-
-REWARD_FNS = {
-    "dense":  dense_reward,
-    "sparse": sparse_reward,
-}
-
