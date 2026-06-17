@@ -59,7 +59,7 @@ def dense_reward(
     gated_progress = w_progress * distance_delta * (1 + alignment_bonus)
 
     normalized_speed = np.clip(forward_speed / MAX_SPEED_MS, 0.0, 1.0)
-    speed_bonus = w_speed * normalized_speed * (1 + alignment_bonus)
+    speed_bonus = w_speed * normalized_speed * (1 + alignment_bonus + theta_improve_bonus)
     
     lap_bonus         = w_lap if lap_completed else 0.0
     near_miss_penalty = w_near_miss if near_miss else 0.0
@@ -69,8 +69,6 @@ def dense_reward(
         existence_bonus
         + gated_progress
         + speed_bonus
-        + alignment_bonus
-        + theta_improve_bonus
         + lap_bonus
         - alignment_penalty
         - near_miss_penalty

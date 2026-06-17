@@ -1,0 +1,75 @@
+env:
+  camera_resolution: [128, 128]
+
+action_space:
+  type: continuous
+
+observation:
+  grayscale: false
+  max_speed: 50.0
+  normalize_lidar: true
+  lidar_max_range: 30.0
+
+reward:
+  type: dense
+
+  # Progress is gated by alignment_factor inside dense_reward,
+  # so the car only earns forward reward while roughly aligned.
+  w_progress: 4.0
+  w_speed: 4.0
+
+  # Alignment heavily boosted — centering on the line is the primary objective.
+  w_alignment_penalty: 3.0
+  w_alignment_bonus: 4.0
+  w_alignment_improve: 8.0
+
+  w_line_lost: 20.0
+  w_existence: 0.01
+  w_lap: 50.0
+  w_collision: 100.0
+  w_near_miss: 5.0
+
+  collision_threshold: 0.35
+
+agent:
+  n_steps: 2048
+  learning_rate: 0.0001      # reduced from 0.0003: larger network needs smaller lr
+  batch_size: 128            # increased from 64: amortises BN statistics better
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.01
+  n_epochs: 10
+  buffer_size: 10000
+  cnn_features_dim: 512      # camera branch output dim in LaneCNN
+
+training:
+  total_timesteps: 1000000
+  checkpoint_every_n_steps: 10000
+
+episode:
+  max_steps: 15000
+  stall_speed_threshold: 0.1
+  stall_steps: 300
+
+monitoring:
+  near_miss_threshold: 1.0
+  lap_departure_distance: 20.0
+  lap_return_distance: 5.0
+  summary_every_n_episodes: 10
+  csv_log: true
+
+obstacles:
+  enabled: false
+  spawn_interval_min_m: 30.0
+  spawn_interval_max_m: 70.0
+  distance_ahead_min: 15.0
+  distance_ahead_max: 35.0
+  min_spawn_distance: 10.0
+  lateral_offset_max: 4.0
+  max_active: 3
+  recycle_behind_distance: 3.0
+  barrel_radius: 0.4
+  barrel_height: 1.0
+  barrel_z: 0.5
+  barrel_color: [1.0, 0.4, 0.0]

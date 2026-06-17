@@ -82,9 +82,9 @@ def eval_model(model, env, writer, file, episodes, episode_stats, episode_reward
                 # Env-level truncation (max_steps or stalled from gym_wrapper)
                 termination_reason = info.get("termination_reason", "truncated")
                 break
-            if not no_lap_stop and env._hw.get_lap_completed():
-                termination_reason = "lap_complete"
-                break
+            # if not no_lap_stop and env._hw.get_lap_completed():
+                # termination_reason = "lap_complete"
+                # break
             if step_count >= max_steps:
                 termination_reason = "eval_max_steps"
                 break
